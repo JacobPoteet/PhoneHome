@@ -1,0 +1,8 @@
+// Let the PhoneHome agent reboot the Pi (web app "Reboot phone" button).
+polkit.addRule(function(action, subject) {
+    if (subject.user == "phonehome" &&
+        (action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions")) {
+        return polkit.Result.YES;
+    }
+});

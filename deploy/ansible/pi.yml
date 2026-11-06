@@ -1,0 +1,115 @@
+# Provision / update the Raspberry Pi inside the phone. See README.md.
+- name: PhoneHome phone
+  hosts: phone
+  become: true
+  vars_files:
+    - vars.yml
+  vars:
+    agent_src: "{{ playbook_dir }}/../../agent/"
+    boot_config: /boot/firmware/config.txt
+
+  handlers:
+    - name: restart agent
+      ansible.builtin.systemd: {name: phonehome-agent, state: restarted, daemon_reload: true}
+    - name: restart journald
+      ansible.builtin.systemd: {name: systemd-journald, state: restarted}
+    - name: reexec systemd
+      ansible.builtin.command: systemctl daemon-reexec
+    - name: reboot needed
+      ansible.builtin.debug: {msg: "Boot config changed: reboot the Pi to apply (sudo reboot)."}
+
+  tasks:
+    - name: Packages
+      ansible.builtin.apt:
+        name: [python3-venv, python3-gpiozero, python3-lgpio, libportaudio2, libsndfile1,
+               alsa-utils, rsync, i2c-tools]
+        update_cache: true
+        cache_valid_time: 86400
+
+    - name: phonehome user
+      ansible.builtin.user:
+        name: phonehome
+        system: true
+        groups: [audio, gpio]
+        append: true
+        create_home: false
+        shell: /usr/sbin/nologin
+
+    - name: Directories
+      ansible.builtin.file: {path: "{{ item.path }}", state: directory, owner: "{{ item.owner }}", mode: "0755"}
+      loop:
+        - {path: /opt/phonehome, owner: root}
+        - {path: /etc/phonehome, owner: root}
+        - {path: /var/lib/phonehome, owner: phonehome}
+
+    - name: Agent source
+      ansible.posix.synchronize:
+        src: "{{ agent_src }}"
+        dest: /opt/phonehome/src/
+        delete: true
+        rsync_opts: ["--exclude=tests", "--exclude=sim-data", "--exclude=__pycache__", "--exclude=*.egg-info"]
+      register: src
+
+    - name: Virtualenv (sees apt's gpiozero/lgpio)
+      ansible.builtin.command: python3 -m venv --system-site-packages /opt/phonehome/venv
+      args: {creates: /opt/phonehome/venv/bin/python}
+
+    - name: Install agent
+      ansible.builtin.pip:
+        name: "/opt/phonehome/src[audio]"
+        virtualenv: /opt/phonehome/venv
+        state: forcereinstall
+      when: src.changed
+      notify: restart agent
+
+    - name: Config
+      ansible.builtin.template:
+        src: templates/agent.toml.j2
+        dest: /etc/phonehome/agent.toml
+        owner: root
+        group: phonehome
+        mode: "0640"
+      notify: restart agent
+
+    - name: systemd unit
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../systemd/phonehome-agent.service"
+        dest: /etc/systemd/system/phonehome-agent.service
+        mode: "0644"
+      notify: restart agent
+
+    - name: Hardware watchdog (reboot if the Pi hangs)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system.conf.d/phonehome-watchdog.conf
+        content: "[Manager]\nRuntimeWatchdogSec=15\nRebootWatchdogSec=2min\n"
+        mode: "0644"
+      notify: reexec systemd
+
+    - name: Keep the journal in RAM (fewer SD writes)
+      ansible.builtin.copy:
+        dest: /etc/systemd/journald.conf.d/phonehome.conf
+        content: "[Journal]\nStorage=volatile\nRuntimeMaxUse=50M\n"
+        mode: "0644"
+      notify: restart journald
+
+    - name: Swap off
+      ansible.builtin.systemd: {name: dphys-swapfile, state: stopped, enabled: false}
+      failed_when: false
+
+    - name: Allow reboot from the web app
+      ansible.builtin.copy:
+        src: files/50-phonehome-reboot.rules
+        dest: /etc/polkit-1/rules.d/50-phonehome-reboot.rules
+        mode: "0644"
+
+    - name: RTC (DS3231) overlay
+      ansible.builtin.lineinfile: {path: "{{ boot_config }}", line: "dtoverlay=i2c-rtc,ds3231"}
+      when: phonehome_rtc | bool
+      notify: reboot needed
+
+    - name: With an RTC, fake-hwclock is not needed
+      ansible.builtin.apt: {name: fake-hwclock, state: absent}
+      when: phonehome_rtc | bool
+
+    - name: Agent enabled and running
+      ansible.builtin.systemd: {name: phonehome-agent, enabled: true, state: started, daemon_reload: true}

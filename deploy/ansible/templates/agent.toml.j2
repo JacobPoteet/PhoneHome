@@ -1,0 +1,19 @@
+# Managed by Ansible (deploy/ansible). Local edits will be overwritten.
+[device]
+name = "{{ phonehome_device_name }}"
+data_dir = "/var/lib/phonehome"
+
+[server]
+url = "{{ phonehome_server_url }}"
+token = "{{ phonehome_server_token }}"
+
+[audio]
+backend = "sounddevice"
+device = "{{ phonehome_audio_device }}"
+
+[gpio]
+backend = "pi"
+off_hook_when = "{{ phonehome_off_hook_when }}"
+
+[control_api]
+token = "{{ phonehome_control_token }}"

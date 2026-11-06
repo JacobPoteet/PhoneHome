@@ -1,0 +1,46 @@
+# PhoneHome agent configuration for the Raspberry Pi in the phone.
+# Installed to /etc/phonehome/agent.toml by deploy/ansible (from a template).
+# Only device-specific settings live here; greetings, prompts, ring schedule
+# and recording limits are managed in the web app and synced from the server.
+
+[device]
+name = "hallway-phone"
+data_dir = "/var/lib/phonehome"
+log_level = "INFO"
+
+[server]
+url = "http://phonehome.lan:8080"   # the PhoneHome server (LXC on Proxmox)
+token = "CHANGE-ME"                 # shared secret, same value on the server
+heartbeat_interval_s = 60
+config_sync_interval_s = 300
+
+[audio]
+backend = "sounddevice"
+device = "USB"            # substring of the USB sound card's name (see: phonehome-agent devices)
+sample_rate = 48000
+blocksize = 256
+output_channels = 2
+input_channels = 1
+earpiece_channels = [0]   # left  -> handset earpiece
+ringer_channels = [1]     # right -> PAM8302 amp -> ringer speaker
+earpiece_gain_db = 0.0
+mic_gain_db = 0.0         # prefer setting capture gain in alsamixer; this is a trim on top
+sidetone = true
+sidetone_gain_db = -18.0
+
+[gpio]
+backend = "pi"
+hook_pin = 17             # physical pin 11; switch between pin and GND
+off_hook_when = "closed"  # flip to "open" if the phone's hook contact works the other way
+hook_bounce_ms = 30
+amp_enable_pin = 22       # physical pin 15 -> PAM8302 SD
+led_pin = 23              # physical pin 16 -> 330 ohm -> LED -> GND
+ringer_off_pin = 24       # physical pin 18 (optional ringer slide switch)
+ringer_low_pin = 25       # physical pin 22 (optional)
+
+[control_api]
+enabled = true
+host = "0.0.0.0"
+port = 8081
+token = "CHANGE-ME-TOO"   # the server uses this to call /ring, /status, /logs...
+allow_reboot = true

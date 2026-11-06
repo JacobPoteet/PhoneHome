@@ -1,0 +1,8 @@
+# Copy to vars.yml (git-ignored). Consider: ansible-vault encrypt vars.yml
+phonehome_device_name: hallway-phone
+phonehome_server_url: "http://phonehome.lan:8080"
+phonehome_server_token: "CHANGE-ME"        # must match the server's agent token
+phonehome_control_token: "CHANGE-ME-TOO"   # the server uses this to call the phone
+phonehome_audio_device: "USB"
+phonehome_off_hook_when: "closed"
+phonehome_rtc: true                        # DS3231 module fitted

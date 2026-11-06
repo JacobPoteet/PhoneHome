@@ -117,17 +117,18 @@ down and learn on, one for the final build (or as a spare handset).
 | 1 | **Raspberry Pi 4 Model B, 2 GB** | Built-in Ethernet, mature, low heat. A Pi 5 is unnecessary because transcription runs on the server. A Pi 3B+ also works | $45 |
 | 2 | **802.3af PoE splitter, 5 V / ≥2.5 A USB-C out, with Ethernet passthrough** | Isolated output. Can sit inside the phone or in the wall box. No fan, flexible placement | $12–18 |
 | 2-alt | Official Raspberry Pi PoE+ HAT | One fewer box, but adds ~20 mm height and a small fan. Use only if the phone has room | $20 |
-| 3 | **USB sound card, CM108/CM119-based, separate mic and headphone jacks** | Stereo out (L = earpiece, R = ringer) plus mono mic in with plug-in power for electret mics. Avoid combo TRRS-only adapters | $8–12 |
+| 3 | **USB sound card × 2, CM108/CM119-based, separate mic and headphone jacks** | Must be stereo out (L = earpiece, R = ringer) + mono mic in with plug-in power, full duplex at 48 kHz. Avoid combo TRRS-only adapters and USB-C dongles. The second is a spare. See [hardware-notes §1](hardware-notes.md) | $16–24 |
 | 4 | **Adafruit PAM8302** (mono 2.5 W class-D amp) | Drives the ringer speaker. Its SD pin goes to a GPIO pin so the amp is fully off (no hiss) when not ringing | $4 |
 | 5 | **Small speaker**, 8 Ω, 1–2 W, 28–40 mm | The ringer. Alternatively drive the phone's existing piezo | $3 |
 | 6 | **Electret mic capsules**, 9.7 mm (pack of 5) | Replacement in case the handset mic is carbon, dynamic or noisy | $5 |
 | 7 | **High-endurance microSD, 32 GB × 2** | Samsung PRO Endurance or SanDisk High Endurance. Keep the second one flashed as a spare | $20 |
+| 7b | **DS3231 RTC module with coin cell** | *Added after writing the agent.* Keeps timestamps right after a power cut even with no internet. See [hardware-notes §2](hardware-notes.md) | $5 |
 | 8 | **3.5 mm plug pigtails** (×2) | Connect the handset and amp to the sound card without cutting the card, so the card can be swapped | $5 |
 | 9 | Perma-Proto board or small perfboard, JST-XH connectors, 24–26 AWG wire, heat shrink, M2.5 nylon standoffs | Everything detachable. No soldering directly to the Pi | $15 |
 | 10 | Pi heatsink (passive) | The phone shell is a closed plastic box | $3 |
 | 11 | **Wall install:** Cat6 run, low-voltage old-work bracket, wall-phone mounting plate (studs) with a keystone/RJ45 opening, short patch cable | The phone hangs on the studs; Ethernet enters through the back | $15–25 |
 | 12 | The phone (×2) | | $20–60 |
-| | **Total** | | **≈ $150–210** |
+| | **Total** | | **≈ $165–225** |
 
 PoE budget: Pi 4 at idle is about 3–4 W, under 8 W peak with the amp ringing.
 **802.3af is plenty.** Your PoE+ switch is more than enough.
@@ -144,19 +145,23 @@ PoE budget: Pi 4 at idle is about 3–4 W, under 8 W peak with the amp ringing.
               └── Mic in (plug-in power) ◄───────────────────  Handset electret mic (polarity matters!)
 
  Pi GPIO 17 ◄── hook switch ── GND        (internal pull-up, 100 nF cap, software debounce)
- Pi GPIO 27 ◄── ringer on/off switch ── GND   (optional: physical "don't ring" switch)
+ Pi GPIO 24 ◄── ringer switch "off" ── GND   (optional: physical "don't ring" switch)
+ Pi GPIO 25 ◄── ringer switch "low" ── GND   (optional: quieter ringing)
+ Pi GPIO 2/3 (I²C) ◄──► DS3231 RTC        (3.3 V + GND)
  Pi GPIO 22 ──► PAM8302 SD                (amp enable, ringer only)
  Pi GPIO 23 ──► 330 Ω ──► LED ── GND      (optional: "new messages" / "recording" light)
  PAM8302 VIN/GND ◄── Pi 5 V / GND
 ```
+
+Full pin map with physical pin numbers: [hardware-notes.md](hardware-notes.md#gpio-pin-map-bcm-numbering).
 
 Notes:
 - **Identify the handset pairs with a multimeter.** The earpiece reads roughly 30–300 Ω.
   An electret mic has polarity: the case is usually ground. Pinouts vary by phone, so we
   will document yours in `hardware/` once it arrives.
 - **Sidetone.** Real phones play your own voice faintly in the earpiece. Without it the
-  handset feels "dead." Most CM108 cards have a hardware "Mic Playback" mixer control that
-  gives zero-latency sidetone. We tune it during the bench build.
+  handset feels "dead." The agent does this in software (about 10 ms delay, adjustable or
+  off), so the card's hardware "Mic Playback" monitor should be **muted**.
 - **Noise.** Keep the mic leads short and twisted (or shielded) and route them away from
   the amp output and the PoE splitter.
 - **Heat.** Monitor CPU temperature from the dashboard. Add a few discreet vent holes on

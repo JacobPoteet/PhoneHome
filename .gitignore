@@ -1,0 +1,8 @@
+sim-data/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+*.pyc
+deploy/ansible/inventory.ini
+deploy/ansible/vars.yml
+tones/

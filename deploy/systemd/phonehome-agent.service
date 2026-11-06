@@ -1,0 +1,41 @@
+[Unit]
+Description=PhoneHome phone agent
+Documentation=https://github.com/JacobPoteet/PhoneHome
+# Deliberately NOT ordered after time-sync.target: if the network is down the
+# phone must still record. Each recording notes whether the clock was synced,
+# and the DS3231 RTC keeps the time right across power cuts.
+Wants=network-online.target
+After=network-online.target sound.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=phonehome
+Group=phonehome
+SupplementaryGroups=audio gpio
+ExecStart=/opt/phonehome/venv/bin/phonehome-agent run -c /etc/phonehome/agent.toml
+# Must be writable: lgpio (gpiozero backend) creates notify files in the cwd.
+WorkingDirectory=/var/lib/phonehome
+StateDirectory=phonehome
+Restart=always
+RestartSec=3
+# The agent only pets the watchdog while audio blocks keep flowing, so a
+# wedged sound card gets the service restarted automatically.
+WatchdogSec=30
+TimeoutStopSec=20
+# Audio first: keep the audio thread responsive on a busy Pi.
+Nice=-10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=0
+
+# Hardening (audio and GPIO device nodes stay accessible).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/phonehome
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target
