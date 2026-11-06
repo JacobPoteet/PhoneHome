@@ -5,7 +5,7 @@
 > forever, transcribed locally, and browsable from desktop or phone.
 > Every so often, the phone rings on its own.
 
-Status: **DRAFT for review** · Last updated 2026-11-06
+Status: **Approved, v1** · Last updated 2026-11-06
 
 ---
 
@@ -61,6 +61,13 @@ below favors that:
 - **Server (LXC on Proxmox):** the source of truth. It stores the archive on the NAS,
   runs the web app, transcribes, and holds all configuration.
 - **Desktop:** a viewer, and the place you run manual off-site backups.
+
+**Where the web app runs:** on the **Proxmox server**, not the Pi. You bookmark the
+server's address in Homepage. The Pi only runs a small, token-protected control API that
+the server talks to (ring now, status, logs, restart). Nobody browses to the Pi directly.
+That keeps the Pi minimal, means the archive is viewable even when the phone is
+unplugged, and keeps all the heavy lifting (transcription, search, exports) on the
+machine with the CPU and storage.
 
 ---
 
@@ -156,8 +163,12 @@ Notes:
   the bottom or back if it runs above ~65 °C.
 
 ### 3.5 Mounting and serviceability
-- The Pi sits on nylon standoffs on a plate glued or screwed into the phone shell, or a
-  3D-printed carrier if you have access to a printer.
+- **3D-printed internal carrier.** One printed plate holds the Pi, sound card, amp, PoE
+  splitter and speaker, and screws into the phone's existing PCB bosses. It's designed
+  once the phone is measured. Source files (parametric, e.g. OpenSCAD or STEP) plus STLs
+  live in `hardware/cad/`.
+- A printed **wall bracket/adapter** if the phone's mounting holes don't line up with a
+  standard wall-phone plate over the low-voltage box.
 - Every connection to the phone's parts uses connectors, so the Pi, sound card and amp
   can each be pulled out without desoldering.
 - The phone lifts off its wall studs → unplug Ethernet → the whole unit is on your bench.
@@ -172,7 +183,7 @@ Notes:
 |---|---|---|
 | `agent/` — **phone-agent** | Pi (Raspberry Pi OS Lite 64-bit) | Python 3.11+, asyncio, `gpiod`/`gpiozero`, `sounddevice` + `soundfile` (FLAC), tiny FastAPI control API, systemd with watchdog |
 | `server/` — **phonehome-server** | LXC on Proxmox (Docker Compose) | Python, FastAPI, SQLite (with FTS5 for search), ffmpeg, background job queue stored in SQLite (no Redis) |
-| `server/worker` — **transcriber** | Same container, separate process | `faster-whisper` on CPU (int8). Start with `large-v3-turbo` or `medium` and benchmark. Your iGPU (OpenVINO/Vulkan via whisper.cpp) is an optional later speed-up |
+| `server/worker` — **transcriber** | Same container, separate process | `faster-whisper` on CPU (int8), **English only** (language forced to `en`, which is faster and avoids misdetection on short clips). Start with `large-v3-turbo` or `medium.en` and benchmark. Your iGPU (OpenVINO/Vulkan via whisper.cpp) is an optional later speed-up |
 | `web/` — **web app** | Built to static files, served by the server | SvelteKit (static adapter) + wavesurfer.js. Mobile-first and installable as a PWA |
 | `deploy/` | Your desktop or the server | Ansible playbook for the Pi (rebuild from a blank SD card in one command), Docker Compose for the server |
 | `tools/` | Windows desktop | `backup.ps1`, plus an offline archive viewer generator |
@@ -217,6 +228,9 @@ Behavior details:
 ### 4.3 Greetings and prompts (built for frequent change)
 
 All managed in the web UI. Each greeting has:
+- **Default greeting: a pleasant tone, no speech.** Pick up → a soft chime → a short beep
+  → recording. It's obvious the phone records, so the greeting doesn't announce it.
+  Spoken or seasonal greetings can be added any time.
 - the audio: uploaded, or recorded directly in the browser (MediaRecorder). The server
   normalizes loudness with ffmpeg `loudnorm` so every greeting plays at the same volume.
 - **rules:** active date range (e.g. Dec 1–31), optional weekdays and time of day,
@@ -248,8 +262,10 @@ from its cache.
 - **Ring volume and sound** are set in software: a vintage bell sample, a 90s electronic
   warble, or anything you upload. The default is low.
 - **Physical override:** if the phone's ringer switch is wired up, "off" disables all rings.
-- **Replay safety:** guests may leave things meant only for you. Each message has a
-  `replay_eligible` flag. The default is decided in review (§10).
+- **Replay eligibility:** every message is eligible by default. Each message still has
+  a `replay_eligible` flag, so we can add filtering later (exclude a message, favorites
+  only, older than N months) without changing the data format. Recording and archiving
+  come first; the ringer is a later phase.
 
 ### 4.5 Data model and archive layout (the long-term part)
 
@@ -443,7 +459,8 @@ PhoneHome/
     PLAN.md               ← this file
     hardware.md           ← build guide with photos, pinouts for *your* phone (later)
     operations.md         ← install, deploy, recovery runbook (later)
-  hardware/               ← wiring diagrams, measurements, 3D-print files if any
+  hardware/               ← wiring diagrams, measurements
+    cad/                  ← 3D-printed carrier and wall bracket (source + STL)
   agent/                  ← phone-agent (Python package, runs on the Pi)
   server/                 ← phonehome-server + transcription worker (Python)
   web/                    ← SvelteKit frontend (builds to static files)
@@ -456,17 +473,19 @@ PhoneHome/
 
 ---
 
-## 10. Open decisions for review
+## 10. Decisions
 
-1. **Direct wiring vs. SLIC** (§3.1). I recommend direct wiring.
-2. **PoE splitter vs. PoE+ HAT** (§3.3). I recommend the splitter. Final call once the phone's interior is measured.
-3. **Memory lane default** (§4.4). Should old messages be replay-eligible by default, or
-   only ones you explicitly mark? Leaning: *opt-in* (only favorites, or messages you
-   flag), so a private message never plays to a random guest.
-4. **Frontend:** SvelteKit (recommended, richer UI) vs. server-rendered HTMX (even fewer
-   dependencies, simpler but less slick on mobile).
-5. **Transcription language(s):** English only, or a multilingual family?
-6. **Recording notice:** should the default greeting mention that messages are saved?
-   It's a nice courtesy for guests.
-7. **3D printer:** do you have access to one? It decides custom brackets vs. standoffs and hot glue.
-8. **Switch brand/model:** only matters if we want to automate PoE power-cycling later.
+| # | Decision | Choice |
+|---|---|---|
+| 1 | Phone interface | **Direct wiring** to USB sound card + GPIO (§3.1) |
+| 2 | Where the web app runs | **Proxmox server** (LXC). The Pi only has an internal control API |
+| 3 | Memory lane replay | **All messages eligible** by default; filtering can be added later |
+| 4 | Frontend | **SvelteKit** (static build) |
+| 5 | Transcription | **English only**, local |
+| 6 | Default greeting | **A pleasant tone, no speech**, and no recording notice |
+| 7 | Mounting | **3D-printed** internal carrier and wall bracket |
+
+Still open (not blocking):
+- **PoE splitter vs. PoE+ HAT** (§3.3). Leaning splitter; final call once the phone's interior is measured.
+- **Exact phone model.** Pick using the §3.2 criteria. Pinouts and measurements get documented in `hardware/`.
+- **Switch brand/model.** Only matters if we automate PoE power-cycling later.
