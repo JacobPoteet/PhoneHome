@@ -1,7 +1,7 @@
 # Hardware notes: what the software needs from the hardware
 
 These requirements came out of writing the agent. Read them **before buying parts**.
-The parts list in [PLAN.md §3.3](PLAN.md#33-bill-of-materials) is updated to match.
+The shopping list in [parts-list.md](parts-list.md) reflects all of this.
 
 ## Must-knows before you buy
 
@@ -33,8 +33,8 @@ Mixer settings to apply once on the bench, then `alsactl store`:
 - **Capture gain:** set so normal speech peaks around −12 dBFS. The status page shows a
   live mic level for this.
 
-### 2. Add a DS3231 real-time clock module (~$5), or use a Pi 5 with its RTC battery
-Timestamps are the backbone of the archive. A Pi 4 has no clock: after a power cut it
+### 2. Add a DS3231 real-time clock module (~$5–14)
+Timestamps are the backbone of the archive. The Pi Zero 2 W has no clock: after a power cut it
 boots with the time of its last shutdown and waits for the internet to correct it.
 After a power outage the router and internet are often the last things to come back.
 Anyone who picks up the phone in that window would get a message dated wrongly forever.
@@ -44,8 +44,10 @@ Anyone who picks up the phone in that window would get a message dated wrongly f
 - A DS3231 makes the problem go away. It uses I²C on physical pins 1, 3, 5 and 6, has
   no conflicts with anything else, and the provisioning playbook enables it
   (`phonehome_rtc: true`).
-- Get one with a coin cell (CR2032 or LIR2032). Avoid the very cheap "for Pi"
-  boards with a fake chip. A ZS-042 board or the Adafruit DS3231 are both fine.
+- The **Adafruit DS3231** (product 3013, CR1220 coin cell) is the no-surprises choice.
+  The cheap **ZS-042** board also works, but it has a charging circuit meant for a
+  rechargeable LIR2032. With a normal CR2032, remove its charging resistor or diode
+  first, or the battery can swell.
 
 ### 3. The ringer is a speaker driven by an amp with an enable pin
 - The **PAM8302** is on the list because it has an **SD (shutdown) pin**. The agent turns
@@ -107,12 +109,23 @@ All pins can be changed in `agent.toml`.
   high-endurance card is plenty; 16 GB would be fine too.
 - **Watchdogs.** The agent stops petting the systemd watchdog if audio stops flowing,
   so the service restarts. The Pi's hardware watchdog reboots it if the whole system hangs.
-- **Power stays under 8 W** even while ringing, so 802.3af PoE is plenty.
+- **Power stays under 4 W** even while ringing (Zero 2 W + PoE board + amp), so 802.3af PoE is plenty.
+
+### 7. Pi Zero 2 W: test USB audio through the hub early
+The PoE board connects the Ethernet chip and the sound card through a small USB hub. On
+the Zero's USB controller, audio through a hub has a history of occasional crackles or
+dropouts with some combinations of card and hub. During the bench build:
+
+1. Leave the phone off the hook and recording for 10 minutes while the status page is open.
+2. `xruns` and `bad_input_blocks` should stay at or near 0, and the recording should
+   sound clean.
+3. If they climb, try the other hub port or the spare sound card. If that doesn't fix
+   it, plug the card straight into the Zero's own USB port and use Wi-Fi with a PoE
+   splitter for power only. If that fails too, use a Pi 4. The software is the same either way.
 
 ## Things that don't matter (so don't spend on them)
-- A Pi 5. The Pi 4 has more headroom than this needs, since all transcription happens
-  on the server. Exception: if you'd rather skip the separate RTC module, a Pi 5 has
-  one built in (add its battery). It runs hotter, though.
+- A Pi 4 or Pi 5. All transcription happens on the server, so the Zero 2 W has plenty
+  of headroom (measured: about 5% of one core and 63 MB of RAM).
 - Fancy audio HATs. Speech through a phone handset doesn't benefit, and USB cards are
   easier to swap.
 - A UPS/battery. Recordings are crash-safe, and the RTC keeps the time.

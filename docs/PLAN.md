@@ -98,9 +98,10 @@ You want something from the 90s/2000s, not antique. Criteria:
 1. **Corded and natively wall-mount.** It mounts on a standard wall plate's two studs.
 2. **Keypad on the base, not in the handset.** Trimline-style phones put the keypad in the
    handset. That makes future keypad features hard, because only 4 wires run through the cord.
-3. **Room inside.** After removing the phone's main PCB you need about **95 × 65 × 30 mm**
-   of free space for a Pi 4 (85 × 56 mm board). Check teardown photos or measure. Phones
-   from this era usually have plenty of hollow space.
+3. **Room inside.** After removing the phone's main PCB you need about **80 × 45 × 35 mm**
+   for the Pi Zero 2 W and its PoE board stacked together (65 × 30 mm footprint). Add room
+   beside it for the USB sound card (about 60 × 20 mm), the small amp and the speaker.
+   Check teardown photos or measure. Most phones from this era have plenty of hollow space.
 4. **Modular handset cord** (4P4C / RJ22 at both ends). This makes the handset easy to
    test and replace.
 5. **Bonus features to repurpose:** a ringer hi/lo/off slide switch (becomes a physical
@@ -112,34 +113,45 @@ down and learn on, one for the final build (or as a spare handset).
 
 ### 3.3 Bill of materials
 
-| # | Part | Notes | ~Cost |
-|---|---|---|---|
-| 1 | **Raspberry Pi 4 Model B, 2 GB** | Built-in Ethernet, mature, low heat. A Pi 5 is unnecessary because transcription runs on the server. A Pi 3B+ also works | $45 |
-| 2 | **802.3af PoE splitter, 5 V / ≥2.5 A USB-C out, with Ethernet passthrough** | Isolated output. Can sit inside the phone or in the wall box. No fan, flexible placement | $12–18 |
-| 2-alt | Official Raspberry Pi PoE+ HAT | One fewer box, but adds ~20 mm height and a small fan. Use only if the phone has room | $20 |
-| 3 | **USB sound card × 2, CM108/CM119-based, separate mic and headphone jacks** | Must be stereo out (L = earpiece, R = ringer) + mono mic in with plug-in power, full duplex at 48 kHz. Avoid combo TRRS-only adapters and USB-C dongles. The second is a spare. See [hardware-notes §1](hardware-notes.md) | $16–24 |
-| 4 | **Adafruit PAM8302** (mono 2.5 W class-D amp) | Drives the ringer speaker. Its SD pin goes to a GPIO pin so the amp is fully off (no hiss) when not ringing | $4 |
-| 5 | **Small speaker**, 8 Ω, 1–2 W, 28–40 mm | The ringer. Alternatively drive the phone's existing piezo | $3 |
-| 6 | **Electret mic capsules**, 9.7 mm (pack of 5) | Replacement in case the handset mic is carbon, dynamic or noisy | $5 |
-| 7 | **High-endurance microSD, 32 GB × 2** | Samsung PRO Endurance or SanDisk High Endurance. Keep the second one flashed as a spare | $20 |
-| 7b | **DS3231 RTC module with coin cell** | *Added after writing the agent.* Keeps timestamps right after a power cut even with no internet. See [hardware-notes §2](hardware-notes.md) | $5 |
-| 8 | **3.5 mm plug pigtails** (×2) | Connect the handset and amp to the sound card without cutting the card, so the card can be swapped | $5 |
-| 9 | Perma-Proto board or small perfboard, JST-XH connectors, 24–26 AWG wire, heat shrink, M2.5 nylon standoffs | Everything detachable. No soldering directly to the Pi | $15 |
-| 10 | Pi heatsink (passive) | The phone shell is a closed plastic box | $3 |
-| 11 | **Wall install:** Cat6 run, low-voltage old-work bracket, wall-phone mounting plate (studs) with a keystone/RJ45 opening, short patch cable | The phone hangs on the studs; Ethernet enters through the back | $15–25 |
-| 12 | The phone (×2) | | $20–60 |
-| | **Total** | | **≈ $165–225** |
+**The full shopping list, with quantities, what to search for and what to check before
+buying, is in [parts-list.md](parts-list.md).** Summary:
 
-PoE budget: Pi 4 at idle is about 3–4 W, under 8 W peak with the amp ringing.
-**802.3af is plenty.** Your PoE+ switch is more than enough.
+| Part | Why | ~Cost |
+|---|---|---|
+| **Raspberry Pi Zero 2 W** (WH version, header pre-soldered) | Plenty of power: the agent uses ~5% of one core and ~63 MB of 512 MB. Small, cool, low power | $15–18 |
+| **PoE + Ethernet + USB hub board for the Pi Zero** (802.3af) | The Zero has no Ethernet or PoE. One board adds both plus USB ports for the sound card. One cable to the wall | $20–25 |
+| **USB sound card × 2** (C-Media CM108/CM119) | Stereo out (L = earpiece, R = ringer) + mic in, one stream. The second is a spare | $16–24 |
+| **PAM8302 amp + 8 Ω speaker** | The ringer, with an enable pin so it's silent when idle | $7 |
+| **DS3231 real-time clock** | Correct timestamps after power cuts, even with no internet | $5–14 |
+| **High-endurance microSD × 2** | Second one pre-flashed as a spare | $20–24 |
+| Electret mic capsules, 3.5 mm pigtails, 4P4C jacks, proto board, connectors, standoffs, heatsink | Wiring, everything detachable | $30 |
+| Wall install: low-voltage bracket, RJ45 keystone, short flat patch cable | The phone hangs on a printed plate over the box | $10–15 |
+| The phone × 2 | One to learn on, one to build | $20–60 |
+| **Total** | | **≈ $145–205** |
+
+**Why a Zero 2 W rather than a Pi 4:** transcription, search and exports all run on the
+server, so the phone only plays, records and uploads. Measured with the finished agent:
+about 0.4% of a desktop core, which works out to roughly 5% of one Zero 2 W core, and
+about 63 MB of RAM. The Zero is smaller (fits more phones), runs cooler in a closed
+plastic shell, uses 1–2 W instead of 3–4 W, and costs less.
+
+**The one risk to check at the bench build:** on the Zero, USB audio through a hub has a
+history of occasional crackles or dropouts. The agent counts audio glitches (`xruns` on
+the status page), so a 10-minute test settles it. Fallbacks, in order: a different sound
+card or hub port; plug the sound card straight into the Zero's own USB port and use
+Wi-Fi with a PoE splitter for power only; or go back to a Pi 4 (the software is
+unchanged either way).
+
+PoE budget: about 1–2 W idle, under 4 W while ringing. **802.3af is plenty.**
 
 ### 3.4 Wiring
 
 ```
- Wall RJ45 (PoE) ──► PoE splitter ──┬── 5 V USB-C ──────────► Pi 4 power
-                                    └── Ethernet (data) ─────► Pi 4 RJ45
-
- Pi USB ──► USB sound card
+ Wall RJ45 (PoE) ──► Zero PoE/Ethernet/USB-hub board ──┬── 5 V ───────► Pi Zero 2 W power
+                     (attached to the Pi Zero)         ├── Ethernet ──► Pi (via its USB bus)
+                                                       └── USB-A port ─┐
+                                                                       ▼
+ Hub USB ──► USB sound card
               ├── Headphone L ─────────────────────────────► Handset earpiece (via 4P4C handset jack)
               ├── Headphone R ──► PAM8302 IN ──► OUT ──────► Ringer speaker
               └── Mic in (plug-in power) ◄───────────────────  Handset electret mic (polarity matters!)
@@ -163,13 +175,14 @@ Notes:
   handset feels "dead." The agent does this in software (about 10 ms delay, adjustable or
   off), so the card's hardware "Mic Playback" monitor should be **muted**.
 - **Noise.** Keep the mic leads short and twisted (or shielded) and route them away from
-  the amp output and the PoE splitter.
-- **Heat.** Monitor CPU temperature from the dashboard. Add a few discreet vent holes on
-  the bottom or back if it runs above ~65 °C.
+  the amp output and the PoE board.
+- **Heat.** The Zero 2 W runs cool at this load, but the PoE board's power converter
+  adds some heat. Monitor CPU temperature on the dashboard and add a few discreet vent
+  holes on the bottom or back if it runs above ~65 °C.
 
 ### 3.5 Mounting and serviceability
-- **3D-printed internal carrier.** One printed plate holds the Pi, sound card, amp, PoE
-  splitter and speaker, and screws into the phone's existing PCB bosses. It's designed
+- **3D-printed internal carrier.** One printed plate holds the Pi + PoE board stack, sound
+  card, amp, clock module and speaker, and screws into the phone's existing PCB bosses. It's designed
   once the phone is measured. Source files (parametric, e.g. OpenSCAD or STEP) plus STLs
   live in `hardware/cad/`.
 - A printed **wall bracket/adapter** if the phone's mounting holes don't line up with a
@@ -489,8 +502,9 @@ PhoneHome/
 | 5 | Transcription | **English only**, local |
 | 6 | Default greeting | **A pleasant tone, no speech**, and no recording notice |
 | 7 | Mounting | **3D-printed** internal carrier and wall bracket |
+| 8 | Phone computer | **Raspberry Pi Zero 2 W + PoE/Ethernet/USB-hub board** (§3.3). Pi 4 is the fallback |
+| 9 | Clock | **DS3231 RTC module** (added after writing the agent) |
 
 Still open (not blocking):
-- **PoE splitter vs. PoE+ HAT** (§3.3). Leaning splitter; final call once the phone's interior is measured.
 - **Exact phone model.** Pick using the §3.2 criteria. Pinouts and measurements get documented in `hardware/`.
 - **Switch brand/model.** Only matters if we automate PoE power-cycling later.
