@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Trash · PhoneHome{% endblock %}
+{% block content %}
+<p><a href="/" class="muted">← All messages</a></p>
+<h1>Trash</h1>
+<p class="muted">Deleted messages stay here for {{ trash_days }} days, then they're removed for good.</p>
+{% if not msgs %}<section class="card empty"><p class="muted">The trash is empty.</p></section>{% endif %}
+<ul class="cards">
+{% for m in msgs %}
+  <li class="card msg">
+    <div class="msg-head">
+      <a class="msg-title" href="/m/{{ m.id }}">{{ m.title or (m.recorded | date) }}</a>
+      <form method="post" action="/m/{{ m.id }}/restore"><button class="btn small">Restore</button></form>
+    </div>
+    <p class="meta">{{ m.recorded | time }} · {{ m.duration_s | duration }} · deleted {{ m.deleted_at[:10] }}</p>
+  </li>
+{% endfor %}
+</ul>
+{% endblock %}

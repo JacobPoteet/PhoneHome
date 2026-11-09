@@ -1,0 +1,5 @@
+{# m: message dict #}
+<audio controls preload="none" data-id="{{ m.id }}" data-heard="{{ 1 if m.heard else 0 }}">
+  {% if m.has_mp3 %}<source src="/media/{{ m.id }}.mp3" type="audio/mpeg">{% endif %}
+  <source src="/media/{{ m.id }}.flac" type="audio/flac">
+</audio>

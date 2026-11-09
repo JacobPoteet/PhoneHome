@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{% block title %}PhoneHome{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css?v={{ version }}">
+<link rel="icon" href="/static/phone.svg" type="image/svg+xml">
+</head>
+<body>
+{% if user %}
+<header class="topbar">
+  <a class="brand" href="/">PhoneHome</a>
+  <nav>
+    <a href="/" class="{{ 'active' if request.url.path == '/' }}">Messages{% if unheard %} <span class="badge">{{ unheard }}</span>{% endif %}</a>
+    <a href="/phone" class="{{ 'active' if request.url.path == '/phone' }}">Phone</a>
+    <a href="/settings" class="{{ 'active' if request.url.path == '/settings' }}">Settings</a>
+  </nav>
+</header>
+{% endif %}
+<main class="wrap">
+  {% if notice %}<p class="flash ok" role="status">{{ notice }}</p>{% endif %}
+  {% if error %}<p class="flash err" role="alert">{{ error }}</p>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+{% if user %}
+<footer class="foot">
+  <span>PhoneHome {{ version }}</span>
+  <form method="post" action="/logout"><button class="link">Sign out {{ user }}</button></form>
+</footer>
+{% endif %}
+<script src="/static/app.js?v={{ version }}" defer></script>
+</body>
+</html>

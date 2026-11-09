@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ m.title or (m.recorded | date) }} · PhoneHome{% endblock %}
+{% block content %}
+<p><a href="/" class="muted">← All messages</a></p>
+{% if m.deleted_at %}
+  <div class="flash err">This message is in the trash.
+    <form method="post" action="/m/{{ m.id }}/restore" class="inline"><button class="btn small">Restore</button></form>
+  </div>
+{% endif %}
+<article class="card">
+  <h1>{{ m.title or (m.recorded | date) }}</h1>
+  <p class="meta">
+    {{ m.recorded | date }} at {{ m.recorded | time }} · {{ m.duration_s | duration }}
+    · {{ kind_labels.get(m.kind, m.kind) }}
+  </p>
+  {% include "_player.html" %}
+  {% if reply_to %}
+    <p class="muted">A reply after hearing <a href="/m/{{ reply_to.id }}">{{ reply_to.title or (reply_to.recorded | date) }}</a>.</p>
+  {% endif %}
+  {% if m.prompt_id %}<p class="muted">Answering prompt <code>{{ m.prompt_id }}</code>.</p>{% endif %}
+  <p class="downloads">
+    Download: <a href="/media/{{ m.id }}.flac?download=1">Original (FLAC)</a>
+    {% if m.has_mp3 %} · <a href="/media/{{ m.id }}.mp3?download=1">MP3</a>{% endif %}
+  </p>
+</article>
+
+<form method="post" action="/m/{{ m.id }}/edit" class="card stack">
+  <h2>Details</h2>
+  <label>Title <input name="title" value="{{ m.title }}" placeholder="e.g. Grandma's visit"></label>
+  <label>People <input name="people" value="{{ m.people | join(', ') }}" placeholder="Comma separated"></label>
+  <label>Tags <input name="tags" value="{{ m.tags | join(', ') }}" placeholder="thanksgiving, birthday"></label>
+  <label>Notes <textarea name="notes" rows="3">{{ m.notes }}</textarea></label>
+  <label class="check"><input type="checkbox" name="favorite" {{ 'checked' if m.favorite }}> Favorite</label>
+  <label class="check"><input type="checkbox" name="replay_eligible" {{ 'checked' if m.replay_eligible }}> The phone may play this back when it rings</label>
+  <div class="row"><button class="btn primary">Save</button></div>
+</form>
+
+<details class="card">
+  <summary>Technical details</summary>
+  <dl class="kv">
+    <dt>ID</dt><dd><code>{{ m.id }}</code></dd>
+    <dt>Received</dt><dd>{{ sidecar.received_at or '—' }}</dd>
+    <dt>Phone</dt><dd>{{ sidecar.device or '—' }} (agent {{ sidecar.agent_version or '?' }})</dd>
+    <dt>Ended by</dt><dd>{{ sidecar.ended_by or '—' }}{% if sidecar.recovered %} (recovered after power loss){% endif %}</dd>
+    {% if sidecar.levels %}<dt>Levels</dt><dd>peak {{ sidecar.levels.peak_dbfs }} dBFS, {{ sidecar.levels.voiced_s }} s of speech</dd>{% endif %}
+    <dt>Clock synced</dt><dd>{{ 'yes' if sidecar.clock_synced else 'no' if sidecar.clock_synced is not none else '—' }}</dd>
+    <dt>Files</dt><dd>{% for f in files %}<code>{{ f.name }}</code> ({{ f.stat().st_size | bytes }})<br>{% endfor %}</dd>
+    <dt>SHA-256</dt><dd><code class="wrap">{{ m.flac_sha256 }}</code></dd>
+  </dl>
+</details>
+
+{% if not m.deleted_at %}
+<form method="post" action="/m/{{ m.id }}/trash" class="danger-zone" data-confirm="Move this message to the trash?">
+  <button class="btn danger">Move to trash</button>
+</form>
+{% endif %}
+{% endblock %}

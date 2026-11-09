@@ -1,0 +1,30 @@
+# PhoneHome server on the Proxmox LXC.
+#   cp .env.example .env    # then fill in the secrets
+#   docker compose up -d --build
+#   docker compose exec phonehome phonehome-server adduser jacob
+name: phonehome
+services:
+  phonehome:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: phonehome-server:local
+    container_name: phonehome
+    restart: unless-stopped
+    # Run as the user that owns the NAS share (see deploy/docker/README.md).
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${PHONEHOME_PORT_HOST:-8080}:8080"
+    environment:
+      PHONEHOME_AGENT_TOKEN: ${PHONEHOME_AGENT_TOKEN:?set PHONEHOME_AGENT_TOKEN in .env}
+      PHONEHOME_AGENT_CONTROL_URL: ${PHONEHOME_AGENT_CONTROL_URL:-}
+      PHONEHOME_AGENT_CONTROL_TOKEN: ${PHONEHOME_AGENT_CONTROL_TOKEN:-}
+      PHONEHOME_HOMEPAGE_TOKEN: ${PHONEHOME_HOMEPAGE_TOKEN:-}
+      PHONEHOME_COOKIE_SECURE: ${PHONEHOME_COOKIE_SECURE:-false}
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      # The archive: the NAS share bind-mounted into the LXC at /mnt/phonehome-archive.
+      - ${PHONEHOME_ARCHIVE_HOST:-/mnt/phonehome-archive}:/archive
+      # Server state (database, sessions, behavior config). Local disk, not the NAS:
+      # SQLite should not live on a network share.
+      - ${PHONEHOME_DATA_HOST:-./data}:/data
