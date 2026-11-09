@@ -7,6 +7,8 @@
   phonehome-server reindex            rebuild the database from the archive folder
   phonehome-server verify             check every file against SHA256SUMS
   phonehome-server transcribe [ID]    transcribe one message, or all without a transcript
+  phonehome-server viewer             rebuild the archive's offline index.html
+  phonehome-server export FILE.zip    write the whole archive (+ offline viewer) to a zip
 """
 
 from __future__ import annotations
@@ -43,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("username")
     sub.add_parser("reindex", help="rebuild the database index from the archive folder")
     sub.add_parser("verify", help="check archive files against SHA256SUMS")
+    sub.add_parser("viewer", help="rebuild the archive's offline index.html")
+    e = sub.add_parser("export", help="write the whole archive to a zip file")
+    e.add_argument("file")
+    e.add_argument("--no-mp3", action="store_true", help="leave out the MP3 copies (smaller)")
+    e.add_argument("--trash", action="store_true", help="include the trash")
     t = sub.add_parser("transcribe", help="transcribe messages now (all missing ones, or one ID)")
     t.add_argument("id", nargs="?")
     args = p.parse_args(argv)
@@ -114,21 +121,36 @@ def main(argv: list[str] | None = None) -> int:
         svc.worker.run_all()
         return 0
 
-    if args.cmd == "verify":
-        from .archive import sha256_file
+    if args.cmd == "viewer":
+        from .viewer import write_viewer
 
-        sums = svc.archive.read_sums()
-        bad = missing = 0
-        for rel, digest in sums.items():
-            path = svc.archive.root / rel
-            if not path.exists():
-                print(f"MISSING  {rel}")
-                missing += 1
-            elif sha256_file(path) != digest:
-                print(f"CHANGED  {rel}")
-                bad += 1
-        print(f"{len(sums)} files checked, {bad} changed, {missing} missing.")
-        return 1 if bad or missing else 0
+        print(f"Wrote {write_viewer(svc.archive)}")
+        return 0
+
+    if args.cmd == "export":
+        from .backup import export_stream, kv_set
+
+        size = 0
+        with open(args.file, "wb") as fh:
+            for chunk in export_stream(svc.archive, include_mp3=not args.no_mp3, include_trash=args.trash,
+                                       on_done=lambda info: kv_set(svc.db, "last_export", info)):
+                fh.write(chunk)
+                size += len(chunk)
+        print(f"Wrote {args.file} ({size / 1048576:.1f} MB)")
+        return 0
+
+    if args.cmd == "verify":
+        from .backup import integrity_check, kv_set
+
+        r = integrity_check(svc.archive)
+        kv_set(svc.db, "integrity", r)  # shows on the Backup page
+        for label, key in (("CHANGED  ", "changed"), ("MISSING  ", "missing"), ("NOT LISTED ", "untracked")):
+            for rel in r[key]:
+                print(label + rel)
+        c = r["counts"]
+        print(f"{r['files']} files checked, {c['changed']} changed, {c['missing']} missing, "
+              f"{c['untracked']} not listed in SHA256SUMS ({r['seconds']} s).")
+        return 0 if r["ok"] else 1
 
     return 2
 

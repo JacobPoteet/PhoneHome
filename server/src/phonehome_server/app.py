@@ -21,17 +21,18 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from . import __version__
 from .archive import Archive, is_message_id
 from .auth import COOKIE_NAME, Auth
+from .backup import archive_stats, export_name, export_stream, kv_get, kv_set
 from .clips import KINDS, ClipError, ClipStore, active_now, describe_rules
 from .config import Settings
 from .db import Database
 from .jobs import Worker
 from .media import MediaError, ffmpeg_available, normalize_clip
-from .messages import IngestError, MessageService
+from .messages import IngestError, MessageService, enqueue
 from .phone import AgentControl, BehaviorConfig, PhoneRegistry
 from .transcribe import FasterWhisperTranscriber, Transcriber, faster_whisper_installed
 
@@ -128,7 +129,7 @@ def create_app(settings: Settings, *, control: AgentControl | None = None,
     async def csrf_guard(request: Request, call_next):
         path = request.url.path
         if (request.method in ("POST", "PUT", "PATCH", "DELETE") and path.startswith("/api/")
-                and not path.startswith("/api/agent/")
+                and not path.startswith("/api/agent/") and path != "/api/backup/report"  # token auth
                 and request.headers.get(CSRF_HEADER) != CSRF_VALUE):
             return JSONResponse({"detail": "missing X-Requested-With header"}, status_code=403)
         return await call_next(request)
@@ -320,6 +321,8 @@ def create_app(settings: Settings, *, control: AgentControl | None = None,
         stats["on_this_day"] = len(svc.messages.on_this_day(now.month, now.day, before_year=now.year))
         phone = svc.phones.primary()
         stats["phone"] = {"device": phone["device"], "online": phone["online"], "age_s": phone["age_s"]} if phone else None
+        integrity = kv_get(svc.db, "integrity")
+        stats["backup"] = {"last": last_backup_at(), "integrity_ok": integrity["ok"] if integrity else None}
         return stats
 
     @app.get("/api/messages", dependencies=user_dep)
@@ -628,6 +631,64 @@ def create_app(settings: Settings, *, control: AgentControl | None = None,
         svc.worker.wake()
         return {"queued": n}
 
+    # ===================================================================
+    # Backups
+    # ===================================================================
+    def last_backup_at() -> str | None:
+        times = [x["at"] for x in (kv_get(svc.db, "last_export"), kv_get(svc.db, "last_backup")) if x]
+        return max(times) if times else None
+
+    @app.get("/api/backup", dependencies=user_dep)
+    def api_backup() -> dict:
+        viewer = svc.archive.root / "index.html"
+        with svc.db.connect() as c:
+            verifying = c.execute("SELECT 1 FROM jobs WHERE kind = 'verify' AND status IN ('pending', 'running')").fetchone()
+        return {
+            "archive": archive_stats(svc.archive),
+            "messages": svc.messages.stats(),
+            "last_export": kv_get(svc.db, "last_export"),
+            "last_backup": kv_get(svc.db, "last_backup"),
+            "last_any": last_backup_at(),
+            "integrity": kv_get(svc.db, "integrity"),
+            "verifying": bool(verifying),
+            "viewer_updated": datetime.fromtimestamp(viewer.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+            if viewer.exists() else None,
+            "backup_token": bool(settings.backup_token),
+            "archive_dir": str(settings.archive_dir),
+            "integrity_check_days": settings.integrity_check_days,
+        }
+
+    @app.get("/api/export", dependencies=user_dep)
+    def api_export(mp3: bool = True, trash: bool = False) -> StreamingResponse:
+        name = export_name()
+        stream = export_stream(svc.archive, include_mp3=mp3, include_trash=trash,
+                               on_done=lambda info: kv_set(svc.db, "last_export", info))
+        return StreamingResponse(stream, media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="{name}.zip"', "Cache-Control": "no-store"})
+
+    @app.post("/api/backup/verify", dependencies=user_dep)
+    def api_backup_verify() -> dict:
+        with svc.db.connect() as c:
+            enqueue(c, "verify", priority=5)  # asked for: ahead of transcriptions
+        svc.worker.wake()
+        return {"ok": True}
+
+    @app.post("/api/backup/report")
+    async def api_backup_report(request: Request, authorization: str | None = Header(default=None)) -> dict:
+        """tools/backup.ps1 reports a finished backup here (Bearer backup_token)."""
+        expected = f"Bearer {settings.backup_token}"
+        if not settings.backup_token or not authorization or not hmac.compare_digest(authorization.encode(), expected.encode()):
+            raise HTTPException(401, "bad or missing backup token")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        body = body if isinstance(body, dict) else {}
+        keep = {k: body.get(k) for k in ("destination", "copied", "updated", "files", "bytes", "verified",
+                                         "problems", "computer", "seconds")}
+        kv_set(svc.db, "last_backup", {"at": datetime.now().astimezone().isoformat(timespec="seconds"), **keep})
+        return {"ok": True}
+
     @app.get("/api/homepage")
     def api_homepage(request: Request, token: str | None = None,
                      authorization: str | None = Header(default=None)) -> dict:
@@ -640,10 +701,14 @@ def create_app(settings: Settings, *, control: AgentControl | None = None,
         stats = svc.messages.stats()
         phone = svc.phones.primary()
         last_age = time.time() - stats["last_ts"] if stats["last_ts"] else None
+        backup = last_backup_at()
+        integrity = kv_get(svc.db, "integrity")
         return {"phone": "online" if phone and phone["online"] else "offline",
                 "new": stats["unheard"], "total": stats["total"],
                 "last": fmt_age(last_age) if last_age is not None else "never",
-                "hours": round(stats["seconds"] / 3600, 1)}
+                "hours": round(stats["seconds"] / 3600, 1),
+                "backup": fmt_age(time.time() - datetime.fromisoformat(backup).timestamp()) if backup else "never",
+                "integrity": ("ok" if integrity["ok"] else "PROBLEM") if integrity else "not checked yet"}
 
     # ===================================================================
     # Audio

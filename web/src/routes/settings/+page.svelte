@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { api } from '#lib/api.js';
 	import { session, toast, toastError } from '#lib/session.svelte.js';
+	import Icon from '#lib/components/Icon.svelte';
 
 	let sys = $state(null);
 	let behavior = $state(null);
@@ -101,6 +102,13 @@
 {#if !sys}
 	<p class="muted">Loading…</p>
 {:else}
+	<a class="card backup-link" href="/backup">
+		<Icon name="download" size={24} />
+		<div><strong>Backup</strong>
+			<span class="muted small">Download everything, copy to a drive, and check that no recording is damaged</span></div>
+		<Icon name="chevron" />
+	</a>
+
 	<section class="card stack">
 		<h2>Recording</h2>
 		<div class="fields">
@@ -160,6 +168,9 @@
 {/if}
 
 <style>
+	.backup-link { display: flex; align-items: center; gap: 14px; text-decoration: none; color: var(--fg); }
+	.backup-link :global(svg:first-child) { color: var(--accent); flex: none; }
+	.backup-link div { flex: 1; display: flex; flex-direction: column; }
 	.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 	.unit { display: flex; align-items: center; gap: 8px; }
 	.unit input { max-width: 110px; }

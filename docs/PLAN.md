@@ -5,7 +5,7 @@
 > forever, transcribed locally, and browsable from desktop or phone.
 > Every so often, the phone rings on its own.
 
-Status: **Approved, v1** · Phases 1, 3 and 5 built (simulated phone, server, archive features) · Last updated 2026-11-09
+Status: **Approved, v1** · Phases 1, 3, 5 and 7 built: everything that doesn't need hardware · Last updated 2026-11-09
 
 ---
 
@@ -453,8 +453,15 @@ any parts arrive, and the logic can be tested without a phone.
 | **4. Install** | Pi in the phone shell, PoE, Cat6 pull, wall mount, Ansible deploy | **It's on the wall and working** |
 | **5. Make it an archive** ✅ | Transcription, search, tags/people/notes editing, On this day, greetings manager | Search "Thanksgiving" and find every message about it |
 | **6. The ringer** | Speaker + amp, ring scheduling, random rings, prompts, memory lane | The phone calls you |
-| **7. Durability** | Export zip + offline viewer, `backup.ps1`, integrity checks, Homepage widget, health page | Back up everything to an off-site drive in one step |
+| **7. Durability** ✅ | Export zip + offline viewer, `backup.ps1`, integrity checks, Homepage widget, health page | Back up everything to an off-site drive in one step |
 | **8. Polish → "done"** | Docs, recovery runbook, pin dependencies | Forget about it for a few years |
+
+**Phase 7 notes:** the archive keeps its own offline `index.html` (rebuilt after every
+change), so the NAS share, an export zip and a `backup.ps1` copy are all browsable without
+PhoneHome. The integrity check runs weekly (`PHONEHOME_INTEGRITY_CHECK_DAYS`) and its
+result appears on the Backup page, the timeline (only when something's wrong) and the
+Homepage widget. `backup.ps1` never overwrites a recording that differs; it reports which
+side is damaged instead.
 
 **Phase 5 notes:** greetings and prompts live in the archive as `greetings/<id>.json` +
 `.flac` (+ the original upload), and the built-in chime is a greeting like any other so it

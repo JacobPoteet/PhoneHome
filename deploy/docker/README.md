@@ -125,10 +125,24 @@ from outside the house over your VPN, never by opening a port.
           label: Total
         - field: last
           label: Last
+        - field: backup
+          label: Backup
+        - field: integrity
+          label: Files
 ```
 
 ## Backups
 
-The archive on the NAS is the thing to protect. Your normal Proxmox `vzdump` of the LXC
-covers the database and accounts, but even without it, `reindex` rebuilds everything
-except "heard" marks. Export and off-site backup tools come in phase 7.
+The archive on the NAS is the thing to protect. PhoneHome helps three ways:
+
+- **Backup page → Download everything:** one zip with every file and an offline
+  `index.html` viewer. Put it on a USB stick or a relative's computer.
+- **`tools/backup.ps1`** on your Windows desktop copies the NAS share to an external
+  drive: additive, never deletes, and verifies every recording. See
+  [tools/README.md](../../tools/README.md). Set `PHONEHOME_BACKUP_TOKEN` so it reports back.
+- **A weekly integrity check** re-hashes every recording against `SHA256SUMS`. A problem
+  shows on the Backup page, the timeline and the Homepage widget.
+
+The archive folder also keeps its own up-to-date `index.html`, so any copy of it can be
+browsed without PhoneHome. Your normal Proxmox `vzdump` covers the database and accounts,
+but even without it, `reindex` rebuilds everything except "heard" marks.

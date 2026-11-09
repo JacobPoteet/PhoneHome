@@ -28,7 +28,7 @@ def test_mp3_runs_before_transcription(client, svc, agent_headers):
     upload(client, agent_headers)
     with svc.db.connect() as c:
         order = [r[0] for r in c.execute("SELECT kind FROM jobs ORDER BY priority, id")]
-    assert order == ["mp3", "transcribe"]
+    assert order == ["mp3", "transcribe", "viewer"]
 
 
 def test_human_edits_survive_retranscription(logged_in, svc, agent_headers, transcriber):

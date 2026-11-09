@@ -37,6 +37,7 @@
 
 	const unheard = $derived(session.stats?.unheard || 0);
 	const memories = $derived(session.stats?.on_this_day || 0);
+	const alert = $derived(session.stats?.backup?.integrity_ok === false);
 </script>
 
 {#if error}
@@ -60,8 +61,10 @@
 				</a>
 			{/each}
 		</nav>
-		<a class="gear" href="/settings" class:active={page.url.pathname === '/settings'} aria-label="Settings">
+		<a class="gear" href={alert ? '/backup' : '/settings'} class:active={page.url.pathname === '/settings' || page.url.pathname === '/backup'}
+			aria-label={alert ? 'Settings: some recordings failed their check' : 'Settings'}>
 			<Icon name="settings" size={22} />
+			{#if alert}<span class="alert" aria-hidden="true"></span>{/if}
 		</a>
 	</header>
 	<main class="wrap">
@@ -99,7 +102,9 @@
 	}
 	.desktop a:hover, .gear:hover { color: var(--fg); }
 	.desktop a.active, .gear.active { color: var(--fg); background: var(--chip); }
-	.gear { padding: 6px; }
+	.gear { padding: 6px; position: relative; }
+	.alert { position: absolute; top: 4px; right: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--bad);
+		border: 2px solid var(--card); }
 	.badge.soft { background: var(--chip); color: var(--fg); border: 1px solid var(--line); }
 	:global(.wrap) { max-width: 820px; margin: 0 auto; padding: 20px 16px 48px; }
 	.tabbar { display: none; }

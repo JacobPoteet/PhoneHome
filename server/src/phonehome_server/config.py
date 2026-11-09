@@ -34,6 +34,10 @@ class Settings:
 
     # Optional token for /api/homepage. Empty: the endpoint needs a login.
     homepage_token: str = ""
+    # Optional token that lets tools/backup.ps1 report a finished backup.
+    backup_token: str = ""
+    # Re-hash every recording against SHA256SUMS this often.
+    integrity_check_days: int = 7
 
     # Session cookie. Set cookie_secure when served over HTTPS.
     cookie_secure: bool = False

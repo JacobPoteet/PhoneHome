@@ -67,7 +67,7 @@ def test_rejects_bad_ids_and_non_flac(client, agent_headers):
 
 def test_mp3_job_makes_playback_copy(client, svc, agent_headers):
     upload(client, agent_headers)
-    assert svc.worker.run_all() == 2  # mp3 + transcript
+    assert svc.worker.run_all() == 3  # mp3, transcript, offline viewer
     msg = svc.messages.get("2026-11-06_193210_k3f9")
     assert msg["has_mp3"]
     mp3 = svc.archive.path(msg["id"], "mp3")

@@ -16,4 +16,4 @@ Components:
 - `server/`: archive, transcription, search, greetings, and the API; runs in Docker in an LXC on Proxmox. **Built**
 - `web/`: the browser app for desktop and mobile (SvelteKit, built to static files). **Built**
 - `deploy/`: Ansible (Pi) and Docker Compose (server)
-- `tools/`: Windows backup script
+- `tools/`: `backup.ps1`, an additive, verified backup to a drive you own (Windows). **Built**

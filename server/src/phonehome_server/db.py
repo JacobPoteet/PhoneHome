@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_ts  REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS kv (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL                    -- JSON
+);
+
 CREATE TABLE IF NOT EXISTS phone (
     device             TEXT PRIMARY KEY,
     last_heartbeat_ts  REAL NOT NULL,

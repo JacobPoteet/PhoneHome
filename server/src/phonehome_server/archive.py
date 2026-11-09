@@ -49,6 +49,7 @@ without the PhoneHome software.
                *.edited.txt is a person's correction of it)
       *.vtt    the transcript with timings (captions for video players)
 
+  index.html   open this in any web browser to browse and play everything
   greetings/, prompts/, ring-sounds/   what the phone played to callers
   .trash/      recently deleted messages (removed for good after 30 days)
   SHA256SUMS   checksums to verify no file has been damaged. On Linux/macOS:

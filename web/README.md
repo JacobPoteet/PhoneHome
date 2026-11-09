@@ -12,6 +12,7 @@ result.
 | **Memories** | Messages from this date in earlier years. Browse any other day too |
 | **Greetings** | Greetings and prompts: upload or record in the browser, preview, switch on and off, and set when each plays (dates, weekdays, times, priority, rotation share). Shows what plays right now |
 | **Phone** | Is it online, what it's doing, Ring now, test tones, restart, log |
+| **Backup** | Download everything as a zip with an offline viewer, set up `backup.ps1`, see the weekly integrity check and what's in the archive |
 | **Settings** | Recording limits, the phone's full settings JSON, transcription status, accounts |
 
 Works on a phone (bottom tab bar) and in dark mode, and can be added to a home screen.

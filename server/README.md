@@ -51,6 +51,7 @@ the **Ring now** and test-tone buttons on the Phone page, also start the server 
 | **Phone config** | `GET /api/agent/config` serves the behavior JSON (greetings, prompts, ringer, recording limits) with an ETag. Heartbeats carry its version, so a change reaches the phone within a minute. |
 | **Memory lane** | `GET /api/agent/replay/random` picks a random message whose "may play back" box is ticked. |
 | **New-message light** | The heartbeat reply tells the phone to turn its LED on while there are unheard messages. |
+| **Backups** | `GET /api/export` streams the whole archive as a zip (audio stored as-is, zip64 for big archives) with a freshly built offline viewer inside. The archive keeps its own `index.html` viewer up to date too. A weekly job re-hashes every recording against `SHA256SUMS` and flags changed, missing or unlisted files. `tools/backup.ps1` can report its runs to `POST /api/backup/report`. |
 | **Homepage** | `/api/homepage?token=…` returns `{"phone": "online", "new": 2, "total": 312, "last": "2 days ago"}` for a `customapi` widget. |
 
 ## The archive is the product
@@ -58,6 +59,7 @@ the **Ring now** and test-tone buttons on the Phone page, also start the server 
 ```
 /archive/
   README.txt                         explains the folder to a human in 2045
+  index.html                         offline viewer: open it in any browser, no server needed
   messages/2026/11/
     2026-11-06_193210_k3f9.flac      original, never modified
     2026-11-06_193210_k3f9.mp3       normalized copy for listening
@@ -81,8 +83,10 @@ phonehome-server serve                 # web app + background worker
 phonehome-server adduser NAME          # add an account or change a password
 phonehome-server deluser NAME
 phonehome-server reindex               # rebuild the database from the archive folder
-phonehome-server verify                # re-hash every file against SHA256SUMS
+phonehome-server verify                # re-hash every recording against SHA256SUMS (also weekly, automatically)
 phonehome-server transcribe [ID]       # transcribe one message, or every one without a transcript
+phonehome-server export FILE.zip       # the whole archive + offline viewer (--no-mp3, --trash)
+phonehome-server viewer                # rebuild the archive's offline index.html
 phonehome-server worker                # just the job worker (if you disable run_worker)
 ```
 
@@ -99,6 +103,8 @@ Environment variables (what Docker Compose uses) or a TOML file at `PHONEHOME_CO
 | `PHONEHOME_AGENT_CONTROL_URL` | *(empty)* | e.g. `http://hallway-phone.lan:8081`; enables the Phone page's buttons |
 | `PHONEHOME_AGENT_CONTROL_TOKEN` | *(empty)* | The phone's `control_api.token` |
 | `PHONEHOME_HOMEPAGE_TOKEN` | *(empty)* | Lets `/api/homepage` be read without logging in |
+| `PHONEHOME_BACKUP_TOKEN` | *(empty)* | Lets `tools/backup.ps1` report finished backups |
+| `PHONEHOME_INTEGRITY_CHECK_DAYS` | `7` | How often every recording is re-hashed |
 | `PHONEHOME_OFFLINE_AFTER_S` | `180` | No heartbeat for this long = offline |
 | `PHONEHOME_COOKIE_SECURE` | `false` | Set `true` behind HTTPS |
 | `PHONEHOME_TRANSCRIBE` | `true` | Off if faster-whisper isn't installed |
@@ -123,7 +129,9 @@ accents, filters, facets, hostile query syntax), On this day, greetings and prom
 conversion, rule validation, what-plays-now, and a check that the server's rule matching
 agrees with the phone's on hundreds of random times), trash and restore with all
 transcript files, rebuilding the index from files, upgrading a phase 3 database, logins and
-CSRF, and end-to-end tests that run the **real agent** against this server. Transcription
+CSRF, exports (every checksum in the zip verified, options, the CLI), the offline viewer
+(escaping, relative links, kept current), integrity checks finding damaged, missing and
+unlisted files, backup reports, and end-to-end tests that run the **real agent** against this server. Transcription
 tests use a stand-in for Whisper so they run in seconds.
 
 ## Layout
@@ -138,5 +146,7 @@ tests use a stand-in for Whisper so they run in seconds.
 | `db.py` | SQLite schema, FTS5 search index, migrations |
 | `jobs.py` | SQLite-backed job queue and worker (MP3, transcription) |
 | `media.py` | ffmpeg (playback MP3s, greeting conversion) |
+| `backup.py` | integrity checks, archive stats, the streamed export |
+| `viewer.py` | the offline `index.html` |
 | `phone.py` | the phone's behavior document, heartbeats, calls to the phone's control API |
 | `auth.py` | accounts (scrypt) and sessions |

@@ -3,7 +3,9 @@
 Kinds:
   mp3         make the normalized playback copy of a message (priority 0)
   transcribe  speech to text with faster-whisper (priority 10, so a long
-              transcription never holds up the next message's playback copy) The worker runs as a thread inside the web
+              transcription never holds up the next message's playback copy)
+  viewer      rebuild the archive's offline index.html after changes (priority 30)
+  verify      re-hash every recording against SHA256SUMS (priority 50, weekly) The worker runs as a thread inside the web
 process by default; ``phonehome-server worker`` runs it on its own.
 """
 
@@ -12,12 +14,15 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Callable
 
 from .config import Settings
 from .db import Database, now_iso
 from .media import make_playback_mp3
-from .messages import MessageService
+from .backup import integrity_check, kv_get, kv_set
+from .messages import MessageService, enqueue
+from .viewer import write_viewer
 
 if TYPE_CHECKING:
     from .transcribe import Transcriber
@@ -35,7 +40,8 @@ class Worker:
         self.db = db
         self.messages = messages
         self.transcriber = transcriber
-        self.handlers: dict[str, Callable[[str | None], None]] = {"mp3": self._mp3, "transcribe": self._transcribe}
+        self.handlers: dict[str, Callable[[str | None], None]] = {
+            "mp3": self._mp3, "transcribe": self._transcribe, "viewer": self._viewer, "verify": self._verify}
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -133,12 +139,25 @@ class Worker:
         log.info("transcribed %s in %.1fs (%d segments)", msg["id"], time.monotonic() - started,
                  len(result.segments))
 
+    def _viewer(self, _: str | None) -> None:
+        write_viewer(self.messages.archive)
+
+    def _verify(self, _: str | None) -> None:
+        kv_set(self.db, "integrity", integrity_check(self.messages.archive))
+
     # -- periodic -----------------------------------------------------------
     def housekeeping(self, force: bool = False) -> None:
         if not force and time.monotonic() - self._last_housekeeping < HOUSEKEEPING_EVERY_S:
             return
         self._last_housekeeping = time.monotonic()
         self.messages.purge_trash(self.settings.trash_days)
+        last = (kv_get(self.db, "integrity") or {}).get("checked_at")
+        due = not last or (datetime.now().astimezone() - datetime.fromisoformat(last)).days >= self.settings.integrity_check_days
+        with self.db.connect() as c:
+            if due:
+                enqueue(c, "verify", priority=50)
+            if not (self.messages.archive.root / "index.html").exists():
+                enqueue(c, "viewer", priority=30)
         with self.db.connect() as c:
             c.execute("DELETE FROM jobs WHERE status = 'done' AND updated_at < datetime('now', '-30 days')")
             c.execute("DELETE FROM sessions WHERE expires_ts < ?", (time.time(),))

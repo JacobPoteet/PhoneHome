@@ -153,8 +153,14 @@ class MessageService:
                 enqueue(c, "mp3", msg_id)
                 if self.transcribe_enabled:
                     enqueue(c, "transcribe", msg_id, priority=10)
+                enqueue(c, "viewer", priority=30)
         log.info("stored message %s (%.1fs)", msg_id, sidecar.get("duration_s") or 0)
         return IngestResult(msg_id, digest, created=True)
+
+    def _viewer_dirty(self) -> None:
+        """Something changed: rebuild the archive's offline index.html soon."""
+        with self.db.connect() as c:
+            enqueue(c, "viewer", priority=30)
 
     # -- queries ------------------------------------------------------------
     def list(self, *, limit: int = 50, before_ts: float | None = None, trashed: bool = False,
@@ -232,6 +238,7 @@ class MessageService:
                                                    transcript=msg["transcript"],
                                                    transcript_state=msg["transcript_state"]),
                                deleted_at=msg["deleted_at"])
+        self._viewer_dirty()
         return self.get(msg_id)  # type: ignore[return-value]
 
     def set_heard(self, msg_id: str, heard: bool = True) -> None:
@@ -251,6 +258,7 @@ class MessageService:
             self.archive.move_to_trash(msg_id)
             with self.db.connect() as c:
                 c.execute("UPDATE messages SET deleted_at = ? WHERE id = ?", (now_iso(), msg_id))
+        self._viewer_dirty()
         log.info("moved %s to the trash", msg_id)
 
     def restore(self, msg_id: str) -> None:
@@ -261,6 +269,7 @@ class MessageService:
             self.archive.restore_from_trash(msg_id)
             with self.db.connect() as c:
                 c.execute("UPDATE messages SET deleted_at = NULL WHERE id = ?", (msg_id,))
+        self._viewer_dirty()
         log.info("restored %s from the trash", msg_id)
 
     def purge_trash(self, older_than_days: int) -> list[str]:
@@ -290,6 +299,7 @@ class MessageService:
             self.archive.write_sidecar(msg_id, sidecar, trashed=trashed)
             with self.db.connect() as c:
                 c.execute("UPDATE messages SET has_mp3 = 1 WHERE id = ?", (msg_id,))
+                enqueue(c, "viewer", priority=30)
 
     # -- transcripts ------------------------------------------------------------
     def _base(self, msg_id: str, trashed: bool) -> Path:
@@ -347,6 +357,7 @@ class MessageService:
             with self.db.connect() as c:
                 c.execute("UPDATE messages SET transcript = ?, transcript_state = ? WHERE id = ?",
                           (text, state, msg_id))
+                enqueue(c, "viewer", priority=30)
 
     def edit_transcript(self, msg_id: str, text: str | None) -> dict:
         """Save a human correction. Empty text drops the correction."""
@@ -377,6 +388,7 @@ class MessageService:
             with self.db.connect() as c:
                 c.execute("UPDATE messages SET transcript = ?, transcript_state = ? WHERE id = ?",
                           (shown, state, msg_id))
+                enqueue(c, "viewer", priority=30)
         return self.get(msg_id)  # type: ignore[return-value]
 
     def set_transcript_state(self, msg_id: str, state: str) -> None:

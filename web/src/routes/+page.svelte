@@ -69,6 +69,7 @@
 	});
 
 	const stats = $derived(session.stats);
+	const backupDays = $derived(stats?.backup?.last ? (Date.now() - new Date(stats.backup.last).getTime()) / 86400000 : Infinity);
 
 	async function markAllHeard() {
 		try {
@@ -112,6 +113,17 @@
 			<span class="muted">{plural(stats.on_this_day, 'message')} from this date in years past</span></div>
 		<Icon name="chevron" />
 	</a>
+{/if}
+
+{#if stats?.backup?.integrity_ok === false}
+	<a class="card notice bad-notice" href="/backup"><Icon name="x" size={22} />
+		<div><strong>Some recordings failed their integrity check</strong>
+			<span class="muted">See what was found and how to fix it</span></div><Icon name="chevron" /></a>
+{:else if stats?.total && backupDays > 90 && show === 'all'}
+	<a class="card notice" href="/backup"><Icon name="download" size={22} />
+		<div><strong>{stats.backup.last ? 'Time for a fresh backup' : 'Keep a copy somewhere safe'}</strong>
+			<span class="muted">{stats.backup.last ? `The last one was ${Math.round(backupDays)} days ago.` : 'No backup yet. It takes a minute.'}</span></div>
+		<Icon name="chevron" /></a>
 {/if}
 
 {#if loading}
@@ -158,5 +170,10 @@
 	}
 	.memories :global(svg:first-child) { color: var(--accent); flex: none; }
 	.memories div { flex: 1; display: flex; flex-direction: column; }
+	.notice { display: flex; align-items: center; gap: 14px; text-decoration: none; color: var(--fg); }
+	.notice :global(svg:first-child) { color: var(--accent); flex: none; }
+	.notice div { flex: 1; display: flex; flex-direction: column; }
+	.bad-notice { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+	.bad-notice :global(svg:first-child) { color: var(--bad); }
 	.foot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 20px; }
 </style>
