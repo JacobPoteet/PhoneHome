@@ -15,7 +15,7 @@ LXC "phonehome" ◄────────────────────�
 
 ## 1. Create the LXC
 
-In the Proxmox UI: **Create CT**, Debian 12 template, unprivileged, 2 cores, 2 GB RAM,
+In the Proxmox UI: **Create CT**, Debian 12 template, unprivileged, 4 cores, 4 GB RAM,
 16 GB disk. Under **Options → Features**, enable **nesting** (and **keyctl**). Those are
 needed for Docker. Then inside the container:
 
@@ -69,7 +69,12 @@ docker compose up -d --build
 docker compose logs -f             # Ctrl+C to stop following
 ```
 
-Open `http://<lxc-ip>:8080` and create the first account in the browser. To add the
+The first build takes a few minutes (it builds the web app and installs the speech
+model's runtime). Open `http://<lxc-ip>:8080` and create the first account in the browser.
+
+The first transcription downloads the Whisper model (about 1.6 GB for `large-v3-turbo`)
+into `./data/models`, so the LXC needs internet access then. Give the LXC 4 GB of RAM if
+you keep the large model; `medium.en` or `small.en` need less and run faster. To add the
 second account:
 
 ```bash
@@ -97,8 +102,10 @@ docker compose exec phonehome phonehome-server adduser NAME
 
 ## HTTPS and remote access
 
-LAN-only plain HTTP is fine to start. If you have a reverse proxy (Caddy, Nginx Proxy
-Manager, Traefik), point it at port 8080 and set `PHONEHOME_COOKIE_SECURE=true`. Reach it
+LAN-only plain HTTP works for everything except **recording greetings in the browser**:
+browsers only allow the microphone on HTTPS (or localhost). Uploading a voice memo works
+either way. If you have a reverse proxy (Caddy, Nginx Proxy Manager, Traefik), point it at
+port 8080 and set `PHONEHOME_COOKIE_SECURE=true`. Reach it
 from outside the house over your VPN, never by opening a port.
 
 ## Homepage widget

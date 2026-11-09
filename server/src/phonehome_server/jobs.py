@@ -1,8 +1,9 @@
 """Background jobs, queued in SQLite (no Redis, no broker).
 
-Kinds today:
-  mp3    make the normalized playback copy of a message
-Later phases add "transcribe". The worker runs as a thread inside the web
+Kinds:
+  mp3         make the normalized playback copy of a message (priority 0)
+  transcribe  speech to text with faster-whisper (priority 10, so a long
+              transcription never holds up the next message's playback copy) The worker runs as a thread inside the web
 process by default; ``phonehome-server worker`` runs it on its own.
 """
 
@@ -11,12 +12,15 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from .config import Settings
 from .db import Database, now_iso
 from .media import make_playback_mp3
 from .messages import MessageService
+
+if TYPE_CHECKING:
+    from .transcribe import Transcriber
 
 log = logging.getLogger(__name__)
 
@@ -25,11 +29,13 @@ HOUSEKEEPING_EVERY_S = 3600
 
 
 class Worker:
-    def __init__(self, settings: Settings, db: Database, messages: MessageService) -> None:
+    def __init__(self, settings: Settings, db: Database, messages: MessageService,
+                 transcriber: "Transcriber | None" = None) -> None:
         self.settings = settings
         self.db = db
         self.messages = messages
-        self.handlers: dict[str, Callable[[str | None], None]] = {"mp3": self._mp3}
+        self.transcriber = transcriber
+        self.handlers: dict[str, Callable[[str | None], None]] = {"mp3": self._mp3, "transcribe": self._transcribe}
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -69,7 +75,7 @@ class Worker:
         with self.db.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             job = c.execute("SELECT * FROM jobs WHERE status = 'pending' AND run_after <= ? "
-                            "ORDER BY id LIMIT 1", (time.time(),)).fetchone()
+                            "ORDER BY priority, id LIMIT 1", (time.time(),)).fetchone()
             if not job:
                 c.execute("COMMIT")
                 return False
@@ -89,6 +95,10 @@ class Worker:
                 c.execute("UPDATE jobs SET status = ?, last_error = ?, run_after = ?, updated_at = ? "
                           "WHERE id = ?", ("failed" if failed else "pending", str(exc)[:1000],
                                            time.time() + 30 * 2 ** attempts, now_iso(), job["id"]))
+            if failed and job["kind"] == "transcribe" and job["message_id"]:
+                msg = self.messages.get(job["message_id"])
+                if msg and msg["transcript_state"] == "pending":
+                    self.messages.set_transcript_state(msg["id"], "failed")
         else:
             with self.db.connect() as c:
                 c.execute("UPDATE jobs SET status = 'done', last_error = NULL, updated_at = ? WHERE id = ?",
@@ -110,6 +120,18 @@ class Worker:
         if not dest.exists():
             make_playback_mp3(src, dest, ffmpeg=self.settings.ffmpeg, bitrate=self.settings.mp3_bitrate)
         self.messages.attach_mp3(msg["id"])
+
+    def _transcribe(self, msg_id: str | None) -> None:
+        msg = self.messages.get(msg_id or "")
+        if not msg:
+            return
+        if self.transcriber is None:
+            raise RuntimeError("transcription is turned off or faster-whisper is not installed")
+        started = time.monotonic()
+        result = self.transcriber.transcribe(self.messages.audio_path(msg, "flac"))
+        self.messages.save_machine_transcript(msg["id"], result)
+        log.info("transcribed %s in %.1fs (%d segments)", msg["id"], time.monotonic() - started,
+                 len(result.segments))
 
     # -- periodic -----------------------------------------------------------
     def housekeeping(self, force: bool = False) -> None:

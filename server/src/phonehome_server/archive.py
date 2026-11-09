@@ -45,7 +45,9 @@ without the PhoneHome software.
                macOS, any web browser)
       *.mp3    the same message, volume-normalized, for easy listening
       *.json   details: when it was recorded, title, notes, people, tags
-      *.txt    a written transcript, when one exists
+      *.txt    a written transcript, when one exists (made by a computer;
+               *.edited.txt is a person's correction of it)
+      *.vtt    the transcript with timings (captions for video players)
 
   greetings/, prompts/, ring-sounds/   what the phone played to callers
   .trash/      recently deleted messages (removed for good after 30 days)
@@ -220,8 +222,9 @@ class Archive:
             raise ArchiveError(f"no files for {msg_id}")
         moves: dict[str, str | None] = {}
         # Sidecar last, so a crash midway leaves the message where its sidecar is.
-        for src in sorted(files, key=lambda p: p.suffix == ".json"):
-            dest = self.path(msg_id, src.suffix[1:], trashed=to_trash)
+        dest_dir = (self.trash if to_trash else self.root) / self.rel_dir(msg_id)
+        for src in sorted(files, key=lambda p: p.name == f"{msg_id}.json"):
+            dest = dest_dir / src.name  # keep full names: <id>.transcript.json is not <id>.json
             move_file_atomic(src, dest)
             moves[self.rel(src)] = self.rel(dest)
         self.update_sums(moves)

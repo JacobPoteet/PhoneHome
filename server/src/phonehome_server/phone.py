@@ -1,9 +1,8 @@
 """What the server knows about the phone, and how it talks back to it.
 
 * Behavior config: the JSON the agent syncs (greetings, prompts, ringer,
-  recording limits). Phase 5 adds a proper editor; for now it is a JSON
-  document edited on the Settings page. Its version is a content hash, so
-  any change reaches the phone on its next heartbeat.
+  recording limits). Its version is a content hash, so any change (a
+  greeting switched on, a new limit) reaches the phone on its next heartbeat.
 * Heartbeats: the agent's status, stored per device.
 * Control: calls to the agent's control API (ring, test tone, sync...).
 """
@@ -20,6 +19,7 @@ from pathlib import Path
 import httpx
 
 from .archive import ASSET_DIRS, Archive, sha256_file, write_json_atomic
+from .clips import ClipStore
 from .config import Settings
 from .db import Database
 
@@ -29,16 +29,29 @@ SAFE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,200}$")
 
 
 class BehaviorConfig:
-    def __init__(self, path: Path, archive: Archive) -> None:
+    """The phone's behavior: a settings document plus the managed clips.
+
+    ``behavior.json`` (in the data dir) holds recording limits, ringer and
+    sound settings, and any extra assets (e.g. ring sounds). Greetings and
+    prompts come from the archive's clip files (clips.py) and are merged in
+    when the phone asks, so the phone sees one document.
+    """
+
+    MANAGED = ("greetings", "prompts")
+
+    def __init__(self, path: Path, archive: Archive, clips: ClipStore) -> None:
         self.path = path
         self.archive = archive
+        self.clips = clips
 
     def load(self) -> dict:
-        """The stored document, without its version."""
+        """The stored settings document, without its version."""
         if not self.path.exists():
             return {}
         data = json.loads(self.path.read_text())
         data.pop("version", None)
+        for key in self.MANAGED:  # from phase 3, before clips were managed
+            data.pop(key, None)
         return data
 
     @staticmethod
@@ -46,17 +59,28 @@ class BehaviorConfig:
         body = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
         return "srv-" + hashlib.sha256(body).hexdigest()[:12]
 
+    def document(self) -> dict:
+        data = self.load()
+        greetings, prompts, clip_assets = self.clips.for_agent()
+        data["greetings"] = greetings
+        data["prompts"] = prompts
+        data["assets"] = {**(data.get("assets") or {}), **clip_assets}
+        return data
+
     def current(self) -> tuple[dict, str]:
         """(document including "version", etag)"""
-        data = self.load()
+        data = self.document()
         version = self.version_of(data)
         return {"version": version, **data}, f'"{version}"'
 
     def save(self, data: dict) -> str:
         if not isinstance(data, dict):
-            raise ValueError("behavior config must be a JSON object")
+            raise ValueError("behavior settings must be a JSON object")
         data = dict(data)
         data.pop("version", None)
+        for key in self.MANAGED:
+            if key in data:
+                raise ValueError(f'"{key}" are managed on the Greetings page, not here')
         assets = data.get("assets") or {}
         if not isinstance(assets, dict):
             raise ValueError('"assets" must be an object of {id: {"filename": ...}}')
@@ -69,7 +93,7 @@ class BehaviorConfig:
                                  f"{', '.join(ASSET_DIRS)}")
             info["sha256"] = sha256_file(path)
         write_json_atomic(self.path, data)
-        return self.version_of(data)
+        return self.current()[0]["version"]
 
     def asset_path(self, filename: str) -> Path | None:
         if not SAFE_FILENAME.match(filename):
@@ -81,7 +105,7 @@ class BehaviorConfig:
         return None
 
     def asset_by_id(self, asset_id: str) -> Path | None:
-        info = (self.load().get("assets") or {}).get(asset_id)
+        info = (self.document().get("assets") or {}).get(asset_id)
         return self.asset_path(info["filename"]) if info else None
 
 
@@ -148,7 +172,11 @@ class AgentControl:
         except httpx.HTTPError as exc:
             return False, f"phone unreachable: {exc}"
         if r.status_code >= 400:
-            return False, f"phone said HTTP {r.status_code}: {r.text[:200]}"
+            try:
+                detail = r.json().get("detail") or r.text
+            except ValueError:
+                detail = r.text
+            return False, f"The phone said no: {str(detail)[:200]}"
         return True, r.text[:500]
 
     def logs(self, lines: int = 200) -> str | None:

@@ -5,7 +5,7 @@
 > forever, transcribed locally, and browsable from desktop or phone.
 > Every so often, the phone rings on its own.
 
-Status: **Approved, v1** · Phases 1 and 3 built (simulated phone + server) · Last updated 2026-11-09
+Status: **Approved, v1** · Phases 1, 3 and 5 built (simulated phone, server, archive features) · Last updated 2026-11-09
 
 ---
 
@@ -449,12 +449,18 @@ any parts arrive, and the logic can be tested without a phone.
 | **0. Order parts** | BOM above, two phones | |
 | **1. Agent MVP (simulated)** ✅ | State machine, greeting playback, FLAC recording, local outbox | Pick up a "virtual phone" on your desktop and leave a message |
 | **2. Bench build** | Pi + sound card + handset + hook switch on the desk, outside the shell | Leave a real message through a real handset. Tune mic gain, sidetone and volume |
-| **3. Server MVP** ✅ | Ingest API, archive layout and sidecars, timeline and playback UI, agent upload. *Built with a server-rendered UI; SvelteKit comes with phase 5's bigger pages* | See messages on your desktop seconds after hanging up |
+| **3. Server MVP** ✅ | Ingest API, archive layout and sidecars, timeline and playback UI, agent upload. *First built with a server-rendered UI, replaced by the SvelteKit app in phase 5* | See messages on your desktop seconds after hanging up |
 | **4. Install** | Pi in the phone shell, PoE, Cat6 pull, wall mount, Ansible deploy | **It's on the wall and working** |
-| **5. Make it an archive** | Transcription, search, tags/people/notes editing, On this day, greetings manager | Search "Thanksgiving" and find every message about it |
+| **5. Make it an archive** ✅ | Transcription, search, tags/people/notes editing, On this day, greetings manager | Search "Thanksgiving" and find every message about it |
 | **6. The ringer** | Speaker + amp, ring scheduling, random rings, prompts, memory lane | The phone calls you |
 | **7. Durability** | Export zip + offline viewer, `backup.ps1`, integrity checks, Homepage widget, health page | Back up everything to an off-site drive in one step |
 | **8. Polish → "done"** | Docs, recovery runbook, pin dependencies | Forget about it for a few years |
+
+**Phase 5 notes:** greetings and prompts live in the archive as `greetings/<id>.json` +
+`.flac` (+ the original upload), and the built-in chime is a greeting like any other so it
+can join a rotation. The phone's behavior document is now settings (`behavior.json`) +
+those clips, merged when the phone asks. Recording greetings in the browser needs HTTPS or
+localhost (a browser rule), so a reverse proxy with a certificate is worth setting up.
 
 **Built ahead of schedule in phase 3** (small enough to include): tags/people/notes
 editing, favorites, trash with restore, phone status page with Ring now / test tones /

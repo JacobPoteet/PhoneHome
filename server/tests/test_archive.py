@@ -64,3 +64,31 @@ def test_passwords_are_hashed(svc):
     assert svc.auth.login("jacob", "correct horse")
     assert svc.auth.login("jacob", "nope") is None
     assert svc.auth.login("nobody", "correct horse") is None
+
+
+def test_phase3_database_upgrades_in_place(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.sqlite3"
+    old = sqlite3.connect(path)
+    old.executescript("""
+        CREATE TABLE messages (id TEXT PRIMARY KEY, recorded_at TEXT NOT NULL, recorded_ts REAL NOT NULL,
+            received_at TEXT, duration_s REAL, kind TEXT NOT NULL DEFAULT 'guest', greeting_id TEXT,
+            prompt_id TEXT, reply_to TEXT, device TEXT, title TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '', people TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]',
+            favorite INTEGER NOT NULL DEFAULT 0, replay_eligible INTEGER NOT NULL DEFAULT 1,
+            heard INTEGER NOT NULL DEFAULT 0, has_mp3 INTEGER NOT NULL DEFAULT 0, flac_sha256 TEXT, deleted_at TEXT);
+        CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, message_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+            run_after REAL NOT NULL DEFAULT 0, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        INSERT INTO messages (id, recorded_at, recorded_ts, title) VALUES
+            ('2026-11-06_193210_k3f9', '2026-11-06T19:32:10-05:00', 0, 'Grandma visits');
+    """)
+    old.commit()
+    old.close()
+    Database(path).init()
+    with Database(path).connect() as c:
+        assert tuple(c.execute("SELECT transcript, transcript_state FROM messages").fetchone()) == ("", "")
+        assert "priority" in {r[1] for r in c.execute("PRAGMA table_info(jobs)")}
+        hits = c.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'grandma'").fetchall()
+        assert len(hits) == 1  # existing rows were indexed

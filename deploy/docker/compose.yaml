@@ -21,6 +21,9 @@ services:
       PHONEHOME_AGENT_CONTROL_TOKEN: ${PHONEHOME_AGENT_CONTROL_TOKEN:-}
       PHONEHOME_HOMEPAGE_TOKEN: ${PHONEHOME_HOMEPAGE_TOKEN:-}
       PHONEHOME_COOKIE_SECURE: ${PHONEHOME_COOKIE_SECURE:-false}
+      # Transcription: large-v3-turbo is accurate; medium.en or small.en are faster on slow CPUs.
+      PHONEHOME_WHISPER_MODEL: ${PHONEHOME_WHISPER_MODEL:-large-v3-turbo}
+      PHONEHOME_TRANSCRIBE: ${PHONEHOME_TRANSCRIBE:-true}
       TZ: ${TZ:-America/New_York}
     volumes:
       # The archive: the NAS share bind-mounted into the LXC at /mnt/phonehome-archive.

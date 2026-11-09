@@ -45,3 +45,40 @@ def make_playback_mp3(src: Path, dest: Path, *, ffmpeg: str = "ffmpeg", bitrate:
     from .archive import move_file_atomic
 
     move_file_atomic(tmp, dest)
+
+
+# Greetings and prompts: trim silence at both ends, then normalize to a
+# comfortable earpiece level. 48 kHz mono 16-bit FLAC is what the phone plays
+# natively, so it never has to resample.
+CLIP_FILTER = (
+    "silenceremove=start_periods=1:start_duration=0.05:start_threshold=-50dB,"
+    "areverse,silenceremove=start_periods=1:start_duration=0.05:start_threshold=-50dB,areverse,"
+    "loudnorm=I=-18:TP=-2:LRA=11"
+)
+MAX_CLIP_SECONDS = 600
+
+
+def normalize_clip(src: Path, dest: Path, *, ffmpeg: str = "ffmpeg") -> float:
+    """Convert any uploaded/recorded audio to the phone's format. Returns seconds."""
+    import soundfile as sf
+
+    if not ffmpeg_available(ffmpeg):
+        raise MediaError("ffmpeg is needed to convert greetings and prompts")
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(src),
+           "-t", str(MAX_CLIP_SECONDS), "-vn", "-af", CLIP_FILTER, "-ar", "48000", "-ac", "1",
+           "-sample_fmt", "s16", "-c:a", "flac", str(dest)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired as exc:
+        dest.unlink(missing_ok=True)
+        raise MediaError("converting the audio took too long") from exc
+    if proc.returncode != 0 or not dest.exists():
+        dest.unlink(missing_ok=True)
+        raise MediaError("that file doesn't look like audio ffmpeg can read: "
+                         + (proc.stderr.strip().splitlines() or ["unknown error"])[-1][:300])
+    info = sf.info(str(dest))
+    seconds = info.frames / info.samplerate
+    if seconds < 0.2:
+        dest.unlink(missing_ok=True)
+        raise MediaError("the audio is silent or too short")
+    return seconds

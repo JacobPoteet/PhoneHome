@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS messages (
     heard            INTEGER NOT NULL DEFAULT 0,  -- UI state only, not in the sidecar
     has_mp3          INTEGER NOT NULL DEFAULT 0,
     flac_sha256      TEXT,
-    deleted_at       TEXT                         -- set while in the trash
+    deleted_at       TEXT,                        -- set while in the trash
+    transcript       TEXT NOT NULL DEFAULT '',    -- what's shown: the human edit, else the machine text
+    transcript_state TEXT NOT NULL DEFAULT ''     -- '' | pending | done | edited | failed
 );
 CREATE INDEX IF NOT EXISTS messages_by_time ON messages (deleted_at, recorded_ts DESC);
 
@@ -45,6 +47,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     kind        TEXT NOT NULL,
     message_id  TEXT,
     status      TEXT NOT NULL DEFAULT 'pending',  -- pending | running | done | failed
+    priority    INTEGER NOT NULL DEFAULT 0,       -- lower runs first
     attempts    INTEGER NOT NULL DEFAULT 0,
     run_after   REAL NOT NULL DEFAULT 0,
     last_error  TEXT,
@@ -74,10 +77,42 @@ CREATE TABLE IF NOT EXISTS phone (
 );
 """
 
+# Full-text search over the index. External-content FTS5: the text lives in
+# `messages`, triggers keep the search index in step. Porter stemming makes
+# "Thanksgiving" match "thanksgivings"; remove_diacritics folds accents.
+FTS_SCHEMA = """
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+    title, notes, people, tags, transcript,
+    content='messages', content_rowid='rowid',
+    tokenize='porter unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts (rowid, title, notes, people, tags, transcript)
+    VALUES (new.rowid, new.title, new.notes, new.people, new.tags, new.transcript);
+END;
+CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, title, notes, people, tags, transcript)
+    VALUES ('delete', old.rowid, old.title, old.notes, old.people, old.tags, old.transcript);
+END;
+CREATE TRIGGER messages_fts_au AFTER UPDATE OF title, notes, people, tags, transcript ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, title, notes, people, tags, transcript)
+    VALUES ('delete', old.rowid, old.title, old.notes, old.people, old.tags, old.transcript);
+    INSERT INTO messages_fts (rowid, title, notes, people, tags, transcript)
+    VALUES (new.rowid, new.title, new.notes, new.people, new.tags, new.transcript);
+END;
+"""
+
+# Columns added after the first release: (table, column, definition).
+MIGRATIONS = [
+    ("messages", "transcript", "TEXT NOT NULL DEFAULT ''"),
+    ("messages", "transcript_state", "TEXT NOT NULL DEFAULT ''"),
+    ("jobs", "priority", "INTEGER NOT NULL DEFAULT 0"),
+]
+
 MESSAGE_FIELDS = (
     "id", "recorded_at", "recorded_ts", "received_at", "duration_s", "kind", "greeting_id",
     "prompt_id", "reply_to", "device", "title", "notes", "people", "tags", "favorite",
-    "replay_eligible", "has_mp3", "flac_sha256",
+    "replay_eligible", "has_mp3", "flac_sha256", "transcript", "transcript_state",
 )
 
 
@@ -93,7 +128,14 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as c:
             c.execute("PRAGMA journal_mode=WAL")
+            for table, column, _ in MIGRATIONS:  # old databases: add columns first
+                cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+                if cols and column not in cols:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {_}")
             c.executescript(SCHEMA)
+            if not c.execute("SELECT 1 FROM sqlite_master WHERE name = 'messages_fts'").fetchone():
+                c.executescript(FTS_SCHEMA)
+                c.execute("INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -107,7 +149,8 @@ class Database:
             conn.close()
 
 
-def row_from_sidecar(meta: dict, *, has_mp3: bool) -> dict:
+def row_from_sidecar(meta: dict, *, has_mp3: bool, transcript: str = "",
+                     transcript_state: str = "") -> dict:
     recorded_at = meta["recorded_at"]
     ts = datetime.fromisoformat(recorded_at).timestamp()
     return {
@@ -129,6 +172,8 @@ def row_from_sidecar(meta: dict, *, has_mp3: bool) -> dict:
         "replay_eligible": int(meta.get("replay_eligible", True) is not False),
         "has_mp3": int(has_mp3),
         "flac_sha256": (meta.get("audio") or {}).get("sha256"),
+        "transcript": transcript,
+        "transcript_state": transcript_state,
     }
 
 

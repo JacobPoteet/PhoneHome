@@ -91,21 +91,28 @@ async def test_config_sync_and_memory_lane_replay(rig, app, svc, agent_headers):
 
     with TestClient(app) as tc:
         upload(tc, agent_headers, audio=flac_bytes(1.0, sr=rig.SR))
-    (svc.archive.root / "prompts" / "mind.flac").write_bytes(flac_bytes(0.5, sr=rig.SR))
+    prompt_audio = svc.archive.tmp / "mind-src.flac"
+    prompt_audio.write_bytes(flac_bytes(0.5, sr=rig.SR))
+    from phonehome_server.media import normalize_clip
+
+    norm = svc.archive.tmp / "mind.flac"
+    seconds = normalize_clip(prompt_audio, norm)
+    clip = svc.clips.create("prompt", "What's on your mind?", normalized=norm, source=prompt_audio,
+                            source_ext="flac", duration_s=seconds)
+    svc.clips.update(clip["id"], {"enabled": True})
     svc.behavior.save({
         "recording": {"max_duration_s": 6.0, "min_duration_s": 1.0, "pickup_settle_ms": 20,
                       "hangup_tone_timeout_s": 0.5},
         "ringer": {"ring_timeout_s": 0.4},
-        "prompts": [{"id": "p-mind", "asset": "mind", "title": "What's on your mind?"}],
-        "assets": {"mind": {"filename": "mind.flac"}},
     })
 
     client = agent_client(app)
     assets = AssetLibrary(rig.store.assets, rig.SR, rig.behavior.asset_filename)
     sync = SyncService(client, rig.store, rig.behavior, assets, lambda: {})
     assert await sync.sync_config() is True
-    assert rig.behavior.current.prompts[0].id == "p-mind"
-    assert (rig.store.assets / "mind.flac").exists()
+    assert rig.behavior.current.prompts[0].id == clip["id"]
+    assert (rig.store.assets / f"{clip['id']}.flac").exists()
+    assert rig.behavior.current.greetings[0].asset == "builtin:chime"
     hb = await client.heartbeat({})
     assert hb["config_version"] == rig.behavior.current.version
     assert await sync.sync_config() is False  # 304, nothing changed

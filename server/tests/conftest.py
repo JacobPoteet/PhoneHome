@@ -35,15 +35,40 @@ def make_meta(msg_id: str = "2026-11-06_193210_k3f9", audio: bytes | None = None
     return meta
 
 
+class FakeTranscriber:
+    """Stands in for faster-whisper: every message says the same thing."""
+
+    name = "fake-whisper"
+
+    def __init__(self, text: str = "Happy Thanksgiving everyone. We miss you, Grandma!") -> None:
+        self.text = text
+        self.calls = 0
+
+    def transcribe(self, audio):
+        from phonehome_server.transcribe import Segment, Transcript, Word
+
+        self.calls += 1
+        words, t = [], 0.0
+        for w in self.text.split():
+            words.append(Word(round(t, 2), round(t + 0.3, 2), " " + w))
+            t += 0.4
+        return Transcript(self.name, "en", [Segment(0.0, round(t, 2), self.text, words)], round(t, 2))
+
+
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     return Settings(archive_dir=tmp_path / "archive", data_dir=tmp_path / "data", agent_token=TOKEN,
-                    run_worker=False, homepage_token="hp")
+                    run_worker=False, homepage_token="hp", web_dir=str(tmp_path / "no-web"))
 
 
 @pytest.fixture
-def app(settings):
-    return create_app(settings)
+def transcriber() -> FakeTranscriber:
+    return FakeTranscriber()
+
+
+@pytest.fixture
+def app(settings, transcriber):
+    return create_app(settings, transcriber=transcriber)
 
 
 @pytest.fixture
@@ -51,9 +76,12 @@ def svc(app):
     return app.state.svc
 
 
+CSRF = {"X-Requested-With": "phonehome"}
+
+
 @pytest.fixture
 def client(app):
-    with TestClient(app) as c:
+    with TestClient(app, headers=CSRF) as c:
         yield c
 
 
@@ -72,6 +100,6 @@ def upload(client, headers, msg_id="2026-11-06_193210_k3f9", audio=None, meta=No
 @pytest.fixture
 def logged_in(client, svc):
     svc.auth.set_user("jacob", "correct horse")
-    r = client.post("/login", data={"username": "jacob", "password": "correct horse"}, follow_redirects=False)
-    assert r.status_code == 303
+    r = client.post("/api/auth/login", json={"username": "jacob", "password": "correct horse"})
+    assert r.status_code == 200
     return client

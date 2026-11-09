@@ -61,14 +61,34 @@ def message_to_dict(row: sqlite3.Row) -> dict:
     d["tags"] = json.loads(d["tags"] or "[]")
     for k in ("favorite", "replay_eligible", "heard", "has_mp3"):
         d[k] = bool(d[k])
-    d["recorded"] = datetime.fromisoformat(d["recorded_at"])
     return d
 
 
+def fts_query(text: str) -> str:
+    """Turn what someone typed into a safe FTS5 query.
+
+    Every word must match (as a prefix, so "thanks" finds "thanksgiving");
+    "quoted phrases" stay phrases. FTS5 syntax characters are neutralized.
+    """
+    import re
+
+    parts = []
+    for phrase, word in re.findall(r'"([^"]+)"|(\S+)', text):
+        if phrase:
+            tokens = re.findall(r"\w+", phrase)
+            if tokens:
+                parts.append('"' + " ".join(tokens) + '"')
+        else:
+            for token in re.findall(r"\w+", word):
+                parts.append(f'"{token}"*')
+    return " ".join(parts)
+
+
 class MessageService:
-    def __init__(self, archive: Archive, db: Database) -> None:
+    def __init__(self, archive: Archive, db: Database, *, transcribe: bool = False) -> None:
         self.archive = archive
         self.db = db
+        self.transcribe_enabled = transcribe
         self._lock = threading.Lock()
 
     # -- ingest ---------------------------------------------------------------
@@ -127,15 +147,19 @@ class MessageService:
             move_file_atomic(upload, flac)
             self.archive.add_sum(flac, digest)
             self.archive.write_sidecar(msg_id, sidecar)
+            state = "pending" if self.transcribe_enabled else ""
             with self.db.connect() as c:
-                upsert_message(c, row_from_sidecar(sidecar, has_mp3=False))
+                upsert_message(c, row_from_sidecar(sidecar, has_mp3=False, transcript_state=state))
                 enqueue(c, "mp3", msg_id)
+                if self.transcribe_enabled:
+                    enqueue(c, "transcribe", msg_id, priority=10)
         log.info("stored message %s (%.1fs)", msg_id, sidecar.get("duration_s") or 0)
         return IngestResult(msg_id, digest, created=True)
 
     # -- queries ------------------------------------------------------------
     def list(self, *, limit: int = 50, before_ts: float | None = None, trashed: bool = False,
              unheard_only: bool = False, favorites_only: bool = False) -> list[dict]:
+        """Newest first. ``before_ts`` pages backwards in time."""
         where = ["deleted_at IS NOT NULL" if trashed else "deleted_at IS NULL"]
         params: list[Any] = []
         if before_ts is not None:
@@ -204,7 +228,9 @@ class MessageService:
             sidecar["edited_at"] = now_iso()
             self.archive.write_sidecar(msg_id, sidecar, trashed=trashed)
             with self.db.connect() as c:
-                upsert_message(c, row_from_sidecar(sidecar, has_mp3=msg["has_mp3"]),
+                upsert_message(c, row_from_sidecar(sidecar, has_mp3=msg["has_mp3"],
+                                                   transcript=msg["transcript"],
+                                                   transcript_state=msg["transcript_state"]),
                                deleted_at=msg["deleted_at"])
         return self.get(msg_id)  # type: ignore[return-value]
 
@@ -265,11 +291,191 @@ class MessageService:
             with self.db.connect() as c:
                 c.execute("UPDATE messages SET has_mp3 = 1 WHERE id = ?", (msg_id,))
 
+    # -- transcripts ------------------------------------------------------------
+    def _base(self, msg_id: str, trashed: bool) -> Path:
+        return self.archive.path(msg_id, "flac", trashed=trashed).with_suffix("")
+
+    def _transcript_text(self, msg_id: str, trashed: bool) -> tuple[str, str]:
+        """(text to show and index, state) from the files on disk."""
+        base = self._base(msg_id, trashed)
+        edited = base.with_name(base.name + ".edited.txt")
+        machine = base.with_name(base.name + ".txt")
+        if edited.exists():
+            return edited.read_text().strip(), "edited"
+        if machine.exists():
+            return machine.read_text().strip(), "done"
+        return "", ""
+
+    def transcript(self, msg: dict) -> dict:
+        """Everything the message page needs about its transcript."""
+        from .transcribe import Transcript
+
+        trashed = msg["deleted_at"] is not None
+        base = self._base(msg["id"], trashed)
+        detail = base.with_name(base.name + ".transcript.json")
+        edited = base.with_name(base.name + ".edited.txt")
+        machine = None
+        if detail.exists():
+            try:
+                machine = Transcript.from_dict(json.loads(detail.read_text()))
+            except (ValueError, KeyError):
+                log.warning("unreadable %s", detail)
+        return {
+            "state": msg["transcript_state"],
+            "text": msg["transcript"],
+            "edited": edited.read_text().strip() if edited.exists() else None,
+            "machine_text": machine.text if machine else None,
+            "model": machine.model if machine else None,
+            "segments": machine.to_dict()["segments"] if machine else [],
+        }
+
+    def save_machine_transcript(self, msg_id: str, t) -> None:
+        from .transcribe import write_transcript_files
+
+        msg = self.get(msg_id)
+        if not msg:
+            return
+        trashed = msg["deleted_at"] is not None
+        with self._lock:
+            write_transcript_files(self._base(msg_id, trashed), t)
+            sidecar = self.archive.read_sidecar(msg_id, trashed=trashed)
+            prev = sidecar.get("transcript") or {}
+            sidecar["transcript"] = {"model": t.model, "language": t.language, "created_at": now_iso(),
+                                     "edited": bool(prev.get("edited"))}
+            self.archive.write_sidecar(msg_id, sidecar, trashed=trashed)
+            text, state = self._transcript_text(msg_id, trashed)
+            with self.db.connect() as c:
+                c.execute("UPDATE messages SET transcript = ?, transcript_state = ? WHERE id = ?",
+                          (text, state, msg_id))
+
+    def edit_transcript(self, msg_id: str, text: str | None) -> dict:
+        """Save a human correction. Empty text drops the correction."""
+        msg = self.get(msg_id)
+        if not msg:
+            raise KeyError(msg_id)
+        trashed = msg["deleted_at"] is not None
+        base = self._base(msg_id, trashed)
+        edited = base.with_name(base.name + ".edited.txt")
+        text = (text or "").strip()
+        with self._lock:
+            if text:
+                from .archive import write_bytes_atomic
+
+                write_bytes_atomic(edited, (text + "\n").encode())
+            else:
+                edited.unlink(missing_ok=True)
+            sidecar = self.archive.read_sidecar(msg_id, trashed=trashed)
+            info = dict(sidecar.get("transcript") or {})
+            info["edited"] = bool(text)
+            if text:
+                info["edited_at"] = now_iso()
+            sidecar["transcript"] = info
+            self.archive.write_sidecar(msg_id, sidecar, trashed=trashed)
+            shown, state = self._transcript_text(msg_id, trashed)
+            if not state and msg["transcript_state"] in ("pending", "failed"):
+                state = msg["transcript_state"]
+            with self.db.connect() as c:
+                c.execute("UPDATE messages SET transcript = ?, transcript_state = ? WHERE id = ?",
+                          (shown, state, msg_id))
+        return self.get(msg_id)  # type: ignore[return-value]
+
+    def set_transcript_state(self, msg_id: str, state: str) -> None:
+        with self.db.connect() as c:
+            c.execute("UPDATE messages SET transcript_state = ? WHERE id = ?", (state, msg_id))
+
+    def queue_transcription(self, msg_id: str | None = None) -> int:
+        """Queue one message, or (``None``) every message without a transcript."""
+        with self.db.connect() as c:
+            if msg_id:
+                ids = [msg_id]
+            else:
+                ids = [r[0] for r in c.execute(
+                    "SELECT id FROM messages WHERE deleted_at IS NULL AND transcript_state IN ('', 'failed')")]
+            for i in ids:
+                enqueue(c, "transcribe", i, priority=10)
+                c.execute("UPDATE messages SET transcript_state = CASE WHEN transcript_state = 'edited' "
+                          "THEN 'edited' ELSE 'pending' END WHERE id = ?", (i,))
+        return len(ids)
+
+    # -- search and memories ------------------------------------------------------
+    def search(self, q: str = "", *, year: int | None = None, tag: str | None = None,
+               person: str | None = None, kind: str | None = None, favorite: bool = False,
+               prompt_id: str | None = None, greeting_id: str | None = None,
+               limit: int = 50, offset: int = 0) -> dict:
+        where = ["m.deleted_at IS NULL"]
+        params: list[Any] = []
+        match = fts_query(q)
+        if match:
+            where.append("m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)")
+            params.append(match)
+        if year:
+            where.append("substr(m.recorded_at, 1, 4) = ?")
+            params.append(f"{int(year):04d}")
+        if tag:
+            where.append("EXISTS (SELECT 1 FROM json_each(m.tags) WHERE value = ?)")
+            params.append(tag)
+        if person:
+            where.append("EXISTS (SELECT 1 FROM json_each(m.people) WHERE value = ?)")
+            params.append(person)
+        if kind:
+            where.append("m.kind = ?")
+            params.append(kind)
+        if favorite:
+            where.append("m.favorite = 1")
+        if prompt_id:
+            where.append("m.prompt_id = ?")
+            params.append(prompt_id)
+        if greeting_id:
+            where.append("m.greeting_id = ?")
+            params.append(greeting_id)
+        cond = " AND ".join(where)
+        with self.db.connect() as c:
+            total = c.execute(f"SELECT COUNT(*) FROM messages m WHERE {cond}", params).fetchone()[0]
+            if match:
+                # Best matches first, with a highlighted snippet of where it matched.
+                rows = c.execute(
+                    f"SELECT m.*, snippet(messages_fts, -1, '\x02', '\x03', ' … ', 24) AS snippet "
+                    f"FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid "
+                    f"WHERE messages_fts MATCH ? AND {cond} ORDER BY bm25(messages_fts, 5, 2, 3, 3, 1) "
+                    f"LIMIT ? OFFSET ?", [match, *params, limit, offset]).fetchall()
+            else:
+                rows = c.execute(f"SELECT m.*, NULL AS snippet FROM messages m WHERE {cond} "
+                                 f"ORDER BY m.recorded_ts DESC LIMIT ? OFFSET ?",
+                                 [*params, limit, offset]).fetchall()
+        return {"total": total, "results": [message_to_dict(r) for r in rows], "query": match}
+
+    def facets(self) -> dict:
+        with self.db.connect() as c:
+            alive = "FROM messages WHERE deleted_at IS NULL"
+            years = c.execute(f"SELECT substr(recorded_at, 1, 4) AS y, COUNT(*) {alive} "
+                              "GROUP BY y ORDER BY y DESC").fetchall()
+            tags = c.execute("SELECT j.value, COUNT(*) FROM messages m, json_each(m.tags) j "
+                             "WHERE m.deleted_at IS NULL GROUP BY j.value ORDER BY COUNT(*) DESC, j.value").fetchall()
+            people = c.execute("SELECT j.value, COUNT(*) FROM messages m, json_each(m.people) j "
+                               "WHERE m.deleted_at IS NULL GROUP BY j.value ORDER BY COUNT(*) DESC, j.value").fetchall()
+            kinds = c.execute(f"SELECT kind, COUNT(*) {alive} GROUP BY kind ORDER BY COUNT(*) DESC").fetchall()
+        pair = lambda rows: [{"value": r[0], "count": r[1]} for r in rows]  # noqa: E731
+        return {"years": pair(years), "tags": pair(tags), "people": pair(people), "kinds": pair(kinds)}
+
+    def on_this_day(self, month: int, day: int, *, before_year: int | None = None) -> list[dict]:
+        """Messages recorded on this calendar date in earlier years, newest year first."""
+        md = f"{month:02d}-{day:02d}"
+        params: list[Any] = [md]
+        extra = ""
+        if before_year:
+            extra = " AND substr(recorded_at, 1, 4) < ?"
+            params.append(f"{before_year:04d}")
+        with self.db.connect() as c:
+            rows = c.execute("SELECT * FROM messages WHERE deleted_at IS NULL AND substr(recorded_at, 6, 5) = ?"
+                             f"{extra} ORDER BY recorded_ts DESC", params).fetchall()
+        return [message_to_dict(r) for r in rows]
+
     # -- rebuild --------------------------------------------------------------
     def reindex(self) -> dict:
         """Rebuild the message index from the archive's sidecars."""
         seen: set[str] = set()
-        counts = {"messages": 0, "trash": 0, "removed": 0, "mp3_queued": 0, "errors": 0}
+        counts = {"messages": 0, "trash": 0, "removed": 0, "mp3_queued": 0, "transcribe_queued": 0,
+                  "errors": 0}
         with self.db.connect() as c:
             heard = {r[0]: r[1] for r in c.execute("SELECT id, heard FROM messages")}
             deleted = {r[0]: r[1] for r in c.execute("SELECT id, deleted_at FROM messages")}
@@ -280,7 +486,8 @@ class MessageService:
                         meta = json.loads(path.read_text())
                         meta["id"] = msg_id
                         has_mp3 = self.archive.path(msg_id, "mp3", trashed=trashed).exists()
-                        row = row_from_sidecar(meta, has_mp3=has_mp3)
+                        text, state = self._transcript_text(msg_id, trashed)
+                        row = row_from_sidecar(meta, has_mp3=has_mp3, transcript=text, transcript_state=state)
                     except Exception:
                         log.exception("unreadable sidecar %s", path)
                         counts["errors"] += 1
@@ -292,23 +499,29 @@ class MessageService:
                     if not has_mp3 and self.archive.path(msg_id, "flac", trashed=trashed).exists():
                         enqueue(c, "mp3", msg_id)
                         counts["mp3_queued"] += 1
+                    if not state and self.transcribe_enabled and not trashed:
+                        enqueue(c, "transcribe", msg_id, priority=10)
+                        c.execute("UPDATE messages SET transcript_state = 'pending' WHERE id = ?", (msg_id,))
+                        counts["transcribe_queued"] += 1
                     seen.add(msg_id)
                     counts["trash" if trashed else "messages"] += 1
             for msg_id in set(heard) - seen:
                 c.execute("DELETE FROM messages WHERE id = ?", (msg_id,))
                 counts["removed"] += 1
             c.execute("COMMIT")
+            # Row ids can change across a VACUUM; rebuilding keeps search exact.
+            c.execute("INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')")
         log.info("reindex: %s", counts)
         return counts
 
 
 # -- jobs -------------------------------------------------------------------
-def enqueue(conn: sqlite3.Connection, kind: str, message_id: str | None = None) -> None:
+def enqueue(conn: sqlite3.Connection, kind: str, message_id: str | None = None, *, priority: int = 0) -> None:
     exists = conn.execute(
         "SELECT 1 FROM jobs WHERE kind = ? AND message_id IS ? AND status IN ('pending', 'running')",
         (kind, message_id)).fetchone()
     if exists:
         return
     t = now_iso()
-    conn.execute("INSERT INTO jobs (kind, message_id, run_after, created_at, updated_at) "
-                 "VALUES (?, ?, ?, ?, ?)", (kind, message_id, time.time(), t, t))
+    conn.execute("INSERT INTO jobs (kind, message_id, priority, run_after, created_at, updated_at) "
+                 "VALUES (?, ?, ?, ?, ?, ?)", (kind, message_id, priority, time.time(), t, t))

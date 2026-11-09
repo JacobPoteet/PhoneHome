@@ -39,6 +39,18 @@ class Settings:
     cookie_secure: bool = False
     session_days: int = 365
 
+    # Transcription (faster-whisper, English only, on the CPU). Turned off
+    # automatically when faster-whisper isn't installed.
+    transcribe: bool = True
+    whisper_model: str = "large-v3-turbo"   # or "medium.en", "small.en" for slower machines
+    whisper_compute_type: str = "int8"
+    whisper_threads: int = 0                # 0 = all cores
+    whisper_beam_size: int = 5
+
+    # The built web app (web/ → npm run build). Empty: look next to the package,
+    # then in the repository's web/build.
+    web_dir: str = ""
+
     # Media processing.
     ffmpeg: str = "ffmpeg"
     mp3_bitrate: str = "96k"
@@ -57,6 +69,10 @@ class Settings:
     @property
     def behavior_path(self) -> Path:
         return self.data_dir / "behavior.json"
+
+    @property
+    def models_dir(self) -> Path:
+        return self.data_dir / "models"
 
 
 def _coerce(value: str, current: object) -> object:

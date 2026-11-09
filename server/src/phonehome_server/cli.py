@@ -6,6 +6,7 @@
   phonehome-server deluser NAME
   phonehome-server reindex            rebuild the database from the archive folder
   phonehome-server verify             check every file against SHA256SUMS
+  phonehome-server transcribe [ID]    transcribe one message, or all without a transcript
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("username")
     sub.add_parser("reindex", help="rebuild the database index from the archive folder")
     sub.add_parser("verify", help="check archive files against SHA256SUMS")
+    t = sub.add_parser("transcribe", help="transcribe messages now (all missing ones, or one ID)")
+    t.add_argument("id", nargs="?")
     args = p.parse_args(argv)
 
     settings = load_settings(args.config)
@@ -96,10 +99,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "reindex":
         counts = svc.messages.reindex()
         print(", ".join(f"{k}: {v}" for k, v in counts.items()))
-        if counts["mp3_queued"]:
-            print("Making missing MP3 copies...")
+        if counts["mp3_queued"] or counts["transcribe_queued"]:
+            print("Making missing MP3 copies and transcripts (Ctrl+C to leave them to the server)...")
             svc.worker.run_all()
         return 1 if counts["errors"] else 0
+
+    if args.cmd == "transcribe":
+        if svc.transcriber is None:
+            print("Transcription is unavailable: install faster-whisper "
+                  "(pip install 'phonehome-server[transcribe]') and keep PHONEHOME_TRANSCRIBE on.", file=sys.stderr)
+            return 1
+        n = svc.messages.queue_transcription(args.id)
+        print(f"Transcribing {n} message(s) with {svc.transcriber.name}...")
+        svc.worker.run_all()
+        return 0
 
     if args.cmd == "verify":
         from .archive import sha256_file

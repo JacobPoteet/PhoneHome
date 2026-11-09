@@ -13,7 +13,7 @@ rings on its own, to play an old memory or ask a new question.
 
 Components:
 - `agent/`: runs on the Raspberry Pi Zero 2 W inside the phone (audio, hook switch, ringer). **Built; runs in simulation**
-- `server/`: archive, web app (and later transcription); runs in Docker in an LXC on Proxmox. **Built: phase 3 server MVP**
-- `web/`: the SvelteKit browser UI (phase 5; until then the server renders its own pages)
+- `server/`: archive, transcription, search, greetings, and the API; runs in Docker in an LXC on Proxmox. **Built**
+- `web/`: the browser app for desktop and mobile (SvelteKit, built to static files). **Built**
 - `deploy/`: Ansible (Pi) and Docker Compose (server)
 - `tools/`: Windows backup script

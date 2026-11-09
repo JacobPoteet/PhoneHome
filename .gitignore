@@ -8,3 +8,4 @@ deploy/ansible/vars.yml
 tones/
 deploy/docker/.env
 deploy/docker/data/
+server/src/phonehome_server/web/
