@@ -1,0 +1,12 @@
+**/__pycache__
+**/*.egg-info
+**/.pytest_cache
+**/.venv
+agent/sim-data
+deploy/docker/data
+.git
+web/node_modules
+web/build
+web/.svelte-kit
+server/dev-archive
+server/dev-data
